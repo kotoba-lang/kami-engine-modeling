@@ -6,6 +6,6 @@
     (is (m/valid-mesh? base))
     (is (= 4 (count (:mesh/vertices base))))
     (is (= 8 (count (:mesh/vertices result))))
-    (is (= 6 (count (:mesh/faces result))))
+    (is (= 5 (count (:mesh/faces result))))
     (is (= [1.0 2.0 3.0] (nth (:mesh/vertices result) 6)))
     (is (m/valid-mesh? result))))

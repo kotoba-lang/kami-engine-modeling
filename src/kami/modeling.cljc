@@ -10,8 +10,10 @@
 (defn valid-mesh? [{:mesh/keys [vertices faces]}]
   (and (vector? vertices) (vector? faces)
        (every? #(and (vector? %) (= 3 (count %)) (every? number? %)) vertices)
-       (every? #(and (>= (count %) 3)
-                     (every? #(and (integer? %) (<= 0 % (dec (count vertices)))) %)) faces)))
+       (every? (fn [face]
+                 (and (>= (count face) 3)
+                      (every? (fn [i] (and (integer? i) (<= 0 i (dec (count vertices))))) face)))
+               faces)))
 
 (defn quad
   "A counter-clockwise quad in the XY plane."
@@ -31,4 +33,9 @@
           top-indices (vec (range base (+ base (count face))))
           sides (mapv (fn [a b c d] [a b c d]) face (concat (rest face) [(first face)])
                       (concat (rest top-indices) [(first top-indices)]) top-indices)]
-      (mesh (into vertices top) (into faces (concat [top-indices] sides))))))
+      ;; Replace the selected cap. Keeping it would create an internal polygon
+      ;; and a non-manifold result after repeated extrusion.
+      (mesh (into vertices top)
+            (into (vec (concat (subvec faces 0 face-index)
+                               (subvec faces (inc face-index))))
+                  (concat [top-indices] sides))))))
