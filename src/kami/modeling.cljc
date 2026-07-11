@@ -21,6 +21,68 @@
   (let [x (/ width 2.0) y (/ height 2.0)]
     (mesh [[(- x) (- y) 0.0] [x (- y) 0.0] [x y 0.0] [(- x) y 0.0]] [[0 1 2 3]])))
 
+(defn cube [size]
+  (let [h (/ size 2.0)]
+    (mesh [[(- h) (- h) (- h)] [h (- h) (- h)] [h h (- h)] [(- h) h (- h)]
+           [(- h) (- h) h] [h (- h) h] [h h h] [(- h) h h]]
+          [[0 3 2 1] [4 5 6 7] [0 1 5 4] [3 7 6 2] [0 4 7 3] [1 2 6 5]])))
+
+(defn face-center [{:mesh/keys [vertices faces]} face-index]
+  (let [face (nth faces face-index) n (count face)]
+    (mapv #(/ % n) (reduce (fn [a i] (mapv + a (nth vertices i))) [0 0 0] face))))
+
+(defn transform-face [m face-index f]
+  (let [ids (set (nth (:mesh/faces m) face-index))]
+    (update m :mesh/vertices
+            #(mapv (fn [i p] (if (ids i) (f p) p)) (range) %))))
+
+(defn translate-face [m face-index delta]
+  (transform-face m face-index #(mapv + % delta)))
+
+(defn scale-face [m face-index factor]
+  (let [c (face-center m face-index)]
+    (transform-face m face-index #(mapv + c (mapv (fn [x y] (* factor (- x y))) % c)))))
+
+(defn inset-face
+  "Inset a polygon toward its center. Replaces the selected polygon with an
+  inner cap at the same face index and adds one ring quad per edge."
+  [{:mesh/keys [vertices faces] :as m} face-index factor]
+  (when-not (< 0 factor 1) (throw (ex-info "inset factor must be between 0 and 1" {:factor factor})))
+  (let [face (nth faces face-index) c (face-center m face-index) base (count vertices)
+        inner (mapv (fn [i] (mapv + c (mapv (fn [x y] (* factor (- x y))) (nth vertices i) c))) face)
+        inner-ids (vec (range base (+ base (count face))))
+        nexts (concat (rest face) [(first face)]) inexts (concat (rest inner-ids) [(first inner-ids)])
+        ring (mapv vector face nexts inexts inner-ids)]
+    (mesh (into vertices inner)
+          (into (assoc faces face-index inner-ids) ring))))
+
+(defn delete-face [m face-index]
+  (update m :mesh/faces #(vec (concat (subvec % 0 face-index) (subvec % (inc face-index))))))
+
+(defn triangulate-face-indices [face]
+  (mapv (fn [i] [(first face) (nth face i) (nth face (inc i))]) (range 1 (dec (count face)))))
+
+(defn- vsub [a b] (mapv - a b))
+(defn- cross [[ax ay az] [bx by bz]] [(- (* ay bz) (* az by)) (- (* az bx) (* ax bz)) (- (* ax by) (* ay bx))])
+(defn- dot [a b] (reduce + (map * a b)))
+(defn- abs-value [x] #?(:clj (Math/abs (double x)) :cljs (js/Math.abs x)))
+(defn- ray-triangle [origin direction a b c]
+  (let [e1 (vsub b a) e2 (vsub c a) h (cross direction e2) det (dot e1 h)]
+    (when (> (abs-value det) 1.0e-8)
+      (let [inv (/ 1 det) s (vsub origin a) u (* inv (dot s h)) q (cross s e1)
+            v (* inv (dot direction q)) t (* inv (dot e2 q))]
+        (when (and (<= 0 u 1) (<= 0 v) (<= (+ u v) 1) (pos? t)) t)))))
+
+(defn pick-face
+  "Return the nearest polygon index intersected by a world-space ray."
+  [{:mesh/keys [vertices faces]} origin direction]
+  (->> faces
+       (map-indexed (fn [fi face]
+                      (when-let [t (some #(apply ray-triangle origin direction (mapv vertices %))
+                                         (triangulate-face-indices face))]
+                        [fi t])))
+       (remove nil?) (sort-by second) ffirst))
+
 (defn extrude-face
   "Extrude one polygon face along `delta` [x y z]. The original face remains
   as the bottom cap; the returned mesh has a new top cap and one quad per edge."
