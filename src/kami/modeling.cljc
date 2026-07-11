@@ -106,12 +106,12 @@
 ;; object and edit modes to share the same immutable command history.
 (defn object
   ([id name object-mesh] (object id name object-mesh {}))
-  ([id name object-mesh {:keys [translation rotation scale parent visible?]
-                         :or {translation [0 0 0] rotation [0 0 0] scale [1 1 1] visible? true}}]
+  ([id name object-mesh {:keys [translation rotation scale parent visible? locked?]
+                         :or {translation [0 0 0] rotation [0 0 0] scale [1 1 1] visible? true locked? false}}]
    (when-not (valid-mesh? object-mesh) (throw (ex-info "object requires a valid mesh" {:id id})))
    {:object/id id :object/name name :object/mesh object-mesh :object/modifiers [] :object/parent parent
     :object/translation (vec translation) :object/rotation (vec rotation)
-    :object/scale (vec scale) :object/visible? visible?}))
+    :object/scale (vec scale) :object/visible? visible? :object/locked? locked?}))
 
 (defn scene ([] (scene [])) ([objects] {:scene/objects (vec objects)}))
 (defn find-object [s id] (first (filter #(= id (:object/id %)) (:scene/objects s))))
@@ -130,6 +130,19 @@
     (when-not source (throw (ex-info "source object not found" {:id source-id})))
     (add-object s (-> source (assoc :object/id new-id :object/name (str (:object/name source) " Copy"))
                       (update :object/translation #(mapv + % [0.5 0.5 0]))))))
+(defn object-descendants [s id]
+  (loop [pending [id] result #{}]
+    (if-let [parent (first pending)]
+      (let [children (map :object/id (filter #(= parent (:object/parent %)) (:scene/objects s)))]
+        (recur (into (vec (rest pending)) children) (into result children))) result)))
+(defn reparent-object [s id parent-id]
+  (when-not (find-object s id) (throw (ex-info "object not found" {:id id})))
+  (when (and parent-id (not (find-object s parent-id))) (throw (ex-info "parent object not found" {:parent-id parent-id})))
+  (when (or (= id parent-id) (contains? (object-descendants s id) parent-id))
+    (throw (ex-info "object hierarchy cycle" {:id id :parent-id parent-id})))
+  (update-object s id assoc :object/parent parent-id))
+(defn set-object-visible [s id visible?] (update-object s id assoc :object/visible? (boolean visible?)))
+(defn set-object-locked [s id locked?] (update-object s id assoc :object/locked? (boolean locked?)))
 (defn set-object-transform [o {:keys [translation rotation scale]}]
   (cond-> o translation (assoc :object/translation (vec translation))
             rotation (assoc :object/rotation (vec rotation)) scale (assoc :object/scale (vec scale))))
@@ -145,6 +158,12 @@
         [x y z] [(+ (* x cy) (* z sy)) y (+ (* (- x) sy) (* z cy))]
         [x y z] [(- (* x cz) (* y sz)) (+ (* x sz) (* y cz)) z]]
     (mapv + [x y z] translation)))
+(defn transform-point-world [s object-id point]
+  (loop [current (find-object s object-id) result point visited #{}]
+    (when-not current (throw (ex-info "object not found" {:id object-id})))
+    (when (contains? visited (:object/id current)) (throw (ex-info "object hierarchy cycle" {:id (:object/id current)})))
+    (let [transformed (transform-point result current) parent (:object/parent current)]
+      (if parent (recur (find-object s parent) transformed (conj visited (:object/id current))) transformed))))
 
 (defn modifier
   ([kind] (modifier kind {}))
@@ -208,6 +227,6 @@
     (if-let [o (first objects)]
       (let [m (evaluated-object-mesh o) offset (count vertices)]
         (recur (rest objects)
-               (into vertices (map #(transform-point % o) (:mesh/vertices m)))
+               (into vertices (map #(transform-point-world s (:object/id o) %) (:mesh/vertices m)))
                (into faces (map #(mapv (fn [i] (+ offset i)) %) (:mesh/faces m)))))
       (mesh vertices faces))))

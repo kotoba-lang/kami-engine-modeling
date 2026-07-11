@@ -46,6 +46,17 @@
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
                  (m/object 3 "Invalid" (m/mesh [] [[0 1 2]]))))))
 
+(deftest hierarchy-world-transform-visibility-and-lock
+  (let [parent (m/object 1 "Parent" (m/cube 1) {:translation [10 0 0]})
+        child (m/object 2 "Child" (m/cube 1) {:translation [0 2 0]})
+        scene (-> (m/scene [parent child]) (m/reparent-object 2 1) (m/set-object-locked 2 true))
+        hidden (m/set-object-visible scene 1 false)]
+    (is (= [10.0 2.0 0.0] (m/transform-point-world scene 2 [0 0 0])))
+    (is (= 1 (:object/parent (m/find-object scene 2))))
+    (is (:object/locked? (m/find-object scene 2)))
+    (is (= 8 (count (:mesh/vertices (m/scene-mesh hidden)))))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (m/reparent-object scene 1 2)))))
+
 (deftest non-destructive-modifier-stack
   (let [base (m/object 1 "Cube" (m/cube 2))
         mirror (m/modifier :mirror {:axis :x})
