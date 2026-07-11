@@ -103,3 +103,12 @@
                  (m/object 2 "Bad" (m/cube 1)
                            {:material {:material/base-color [1 0 0]
                                        :material/metallic 0 :material/roughness 1}})))))
+
+(deftest material-preserving-scene-renderables
+  (let [red {:material/base-color [1 0 0 1] :material/metallic 0 :material/roughness 0.5}
+        parent (m/object 1 "Parent" (m/cube 1) {:translation [4 0 0] :material red})
+        child (m/object 2 "Child" (m/cube 1) {:translation [0 2 0] :parent 1})
+        draws (m/scene-renderables (m/scene [parent child]))]
+    (is (= 2 (count draws)))
+    (is (= red (:object/material (first draws))))
+    (is (= [3.5 1.5 -0.5] (first (:mesh/vertices (:object/mesh (second draws))))))))

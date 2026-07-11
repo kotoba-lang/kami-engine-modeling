@@ -276,3 +276,16 @@
                (into vertices (map #(transform-point-world s (:object/id o) %) (:mesh/vertices m)))
                (into faces (map #(mapv (fn [i] (+ offset i)) %) (:mesh/faces m)))))
       (mesh vertices faces))))
+
+(defn scene-renderables
+  "Return visible, evaluated meshes with hierarchy transforms baked in while
+  preserving object identity and material for multi-draw renderers/exporters."
+  [s]
+  (mapv (fn [o]
+          (let [m (evaluated-object-mesh o)]
+            {:object/id (:object/id o) :object/name (:object/name o)
+             :object/material (:object/material o)
+             :object/mesh (mesh (mapv #(transform-point-world s (:object/id o) %)
+                                     (:mesh/vertices m))
+                               (:mesh/faces m))}))
+        (filter :object/visible? (:scene/objects s))))
