@@ -88,3 +88,18 @@
     (is (= 16 (count (:mesh/vertices (m/mirror-mesh cube :z)))))
     (is (= 24 (count (:mesh/vertices (m/array-mesh cube 3 [2 0 0])))))
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (m/array-mesh cube 0 [1 0 0])))))
+
+(deftest portable-pbr-materials
+  (let [base (m/scene [(m/object 1 "Cube" (m/cube 2))])
+        material {:material/base-color [0.8 0.2 0.1 1.0]
+                  :material/metallic 0.75 :material/roughness 0.2}
+        edited (m/set-object-material base 1 material)]
+    (is (= [0.35 0.58 1.0 1.0]
+           (:material/base-color (:object/material (m/find-object base 1)))))
+    (is (= material (:object/material (m/find-object edited 1))))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                 (m/set-object-material base 1 (assoc material :material/metallic 1.5))))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                 (m/object 2 "Bad" (m/cube 1)
+                           {:material {:material/base-color [1 0 0]
+                                       :material/metallic 0 :material/roughness 1}})))))

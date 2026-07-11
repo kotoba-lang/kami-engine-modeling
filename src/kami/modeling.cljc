@@ -134,12 +134,20 @@
 ;; object and edit modes to share the same immutable command history.
 (defn object
   ([id name object-mesh] (object id name object-mesh {}))
-  ([id name object-mesh {:keys [translation rotation scale parent visible? locked?]
-                         :or {translation [0 0 0] rotation [0 0 0] scale [1 1 1] visible? true locked? false}}]
+  ([id name object-mesh {:keys [translation rotation scale parent visible? locked? material]
+                         :or {translation [0 0 0] rotation [0 0 0] scale [1 1 1] visible? true locked? false
+                              material {:material/base-color [0.35 0.58 1.0 1.0]
+                                        :material/metallic 0.0 :material/roughness 0.5}}}]
    (when-not (valid-mesh? object-mesh) (throw (ex-info "object requires a valid mesh" {:id id})))
+   (when-not (and (= 4 (count (:material/base-color material)))
+                  (every? #(and (number? %) (<= 0 % 1)) (:material/base-color material))
+                  (every? #(and (number? %) (<= 0 % 1))
+                          [(:material/metallic material) (:material/roughness material)]))
+     (throw (ex-info "object requires a valid PBR material" {:id id :material material})))
    {:object/id id :object/name name :object/mesh object-mesh :object/modifiers [] :object/parent parent
     :object/translation (vec translation) :object/rotation (vec rotation)
-    :object/scale (vec scale) :object/visible? visible? :object/locked? locked?}))
+    :object/scale (vec scale) :object/visible? visible? :object/locked? locked?
+    :object/material material}))
 
 (defn scene ([] (scene [])) ([objects] {:scene/objects (vec objects)}))
 (defn find-object [s id] (first (filter #(= id (:object/id %)) (:scene/objects s))))
@@ -171,6 +179,16 @@
   (update-object s id assoc :object/parent parent-id))
 (defn set-object-visible [s id visible?] (update-object s id assoc :object/visible? (boolean visible?)))
 (defn set-object-locked [s id locked?] (update-object s id assoc :object/locked? (boolean locked?)))
+(defn set-object-material [s id material]
+  ;; Reuse object construction as the single validation boundary so imported
+  ;; and interactively edited materials obey the same portable project schema.
+  (let [o (find-object s id)]
+    (object (:object/id o) (:object/name o) (:object/mesh o)
+            {:translation (:object/translation o) :rotation (:object/rotation o)
+             :scale (:object/scale o) :parent (:object/parent o)
+             :visible? (:object/visible? o) :locked? (:object/locked? o)
+             :material material})
+    (update-object s id assoc :object/material material)))
 (defn set-object-transform [o {:keys [translation rotation scale]}]
   (cond-> o translation (assoc :object/translation (vec translation))
             rotation (assoc :object/rotation (vec rotation)) scale (assoc :object/scale (vec scale))))
