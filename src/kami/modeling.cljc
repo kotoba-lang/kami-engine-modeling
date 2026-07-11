@@ -30,6 +30,18 @@
 (defn face-center [{:mesh/keys [vertices faces]} face-index]
   (let [face (nth faces face-index) n (count face)]
     (mapv #(/ % n) (reduce (fn [a i] (mapv + a (nth vertices i))) [0 0 0] face))))
+(defn mesh-edges [{:mesh/keys [faces]}]
+  (->> faces
+       (mapcat (fn [face] (map vector face (concat (rest face) [(first face)]))))
+       (map #(vec (sort %))) distinct vec))
+(defn edge-center [{:mesh/keys [vertices]} [a b]] (mapv #(/ % 2.0) (mapv + (nth vertices a) (nth vertices b))))
+(defn translate-vertex [m vertex-index delta]
+  (when-not (< -1 vertex-index (count (:mesh/vertices m))) (throw (ex-info "vertex index out of bounds" {:index vertex-index})))
+  (update-in m [:mesh/vertices vertex-index] #(mapv + % delta)))
+(defn translate-edge [m edge delta]
+  (let [valid-edges (set (mesh-edges m)) normalized (vec (sort edge))]
+    (when-not (valid-edges normalized) (throw (ex-info "edge not found" {:edge edge})))
+    (reduce #(translate-vertex %1 %2 delta) m normalized)))
 
 (defn transform-face [m face-index f]
   (let [ids (set (nth (:mesh/faces m) face-index))]
@@ -82,6 +94,22 @@
                                          (triangulate-face-indices face))]
                         [fi t])))
        (remove nil?) (sort-by second) ffirst))
+(defn pick-element
+  "Pick a face, or the nearest vertex/edge on that hit face, along a ray."
+  [{:mesh/keys [vertices faces] :as m} origin direction mode]
+  (let [hits (->> faces
+                  (map-indexed (fn [fi face]
+                                 (when-let [t (some #(apply ray-triangle origin direction (mapv vertices %))
+                                                    (triangulate-face-indices face))] [fi t])))
+                  (remove nil?) (sort-by second))]
+    (when-let [[face-index t] (first hits)]
+      (let [face (nth faces face-index) hit (mapv + origin (mapv #(* t %) direction))
+            distance2 (fn [a] (reduce + (map (fn [x y] (let [d (- x y)] (* d d))) a hit)))]
+        (case mode
+          :vertex (apply min-key #(distance2 (nth vertices %)) face)
+          :edge (let [edges (mapv #(vec (sort %)) (map vector face (concat (rest face) [(first face)])))]
+                  (apply min-key #(distance2 (edge-center m %)) edges))
+          face-index)))))
 
 (defn extrude-face
   "Extrude one polygon face along `delta` [x y z]. The original face remains

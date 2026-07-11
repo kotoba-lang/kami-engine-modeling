@@ -22,6 +22,16 @@
     (is (= 0 (m/pick-face base [0 0 -4] [0 0 1])))
     (is (m/valid-mesh? (m/scale-face base 1 0.5)))))
 
+(deftest vertex-edge-editing-and-picking
+  (let [base (m/cube 2) vertex (m/translate-vertex base 6 [0 0 1])
+        edge (m/translate-edge base [5 6] [1 0 0])]
+    (is (= 12 (count (m/mesh-edges base))))
+    (is (= [1.0 1.0 2.0] (nth (:mesh/vertices vertex) 6)))
+    (is (= [2.0 -1.0 1.0] (nth (:mesh/vertices edge) 5)))
+    (is (integer? (m/pick-element base [0 0 4] [0 0 -1] :vertex)))
+    (is (= 2 (count (m/pick-element base [0 0 4] [0 0 -1] :edge))))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (m/translate-edge base [0 6] [1 0 0])))))
+
 (deftest multi-object-scene-editing
   (let [cube-a (m/object 1 "Cube" (m/cube 2))
         base (m/add-object (m/scene) cube-a)
