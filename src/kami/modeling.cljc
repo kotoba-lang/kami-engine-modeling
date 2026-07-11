@@ -4,16 +4,35 @@
 
 (defn mesh
   "Construct a mesh from vertex positions and polygon index vectors."
-  [vertices faces]
-  {:mesh/vertices (vec vertices) :mesh/faces (mapv vec faces)})
+  ([vertices faces] (mesh vertices faces nil))
+  ([vertices faces uvs]
+   (cond-> {:mesh/vertices (vec vertices) :mesh/faces (mapv vec faces)}
+     uvs (assoc :mesh/uvs (mapv vec uvs)))))
 
-(defn valid-mesh? [{:mesh/keys [vertices faces]}]
+(defn valid-mesh? [{:mesh/keys [vertices faces uvs]}]
   (and (vector? vertices) (vector? faces)
        (every? #(and (vector? %) (= 3 (count %)) (every? number? %)) vertices)
        (every? (fn [face]
                  (and (>= (count face) 3)
                       (every? (fn [i] (and (integer? i) (<= 0 i (dec (count vertices))))) face)))
-               faces)))
+               faces)
+       (or (nil? uvs)
+           (and (vector? uvs) (= (count vertices) (count uvs))
+                (every? #(and (vector? %) (= 2 (count %)) (every? number? %)) uvs)))))
+
+(defn planar-unwrap
+  "Generate normalized per-vertex UVs by projecting onto an axis plane.
+  Axis is the projection normal (:x, :y, or :z). Degenerate extents map to 0."
+  [m axis]
+  (when-not (#{:x :y :z} axis) (throw (ex-info "invalid unwrap axis" {:axis axis})))
+  (let [indices ({:x [1 2] :y [0 2] :z [0 1]} axis)
+        projected (mapv (fn [p] (mapv #(nth p %) indices)) (:mesh/vertices m))
+        mins (mapv #(apply min (map % projected)) [first second])
+        maxs (mapv #(apply max (map % projected)) [first second])
+        sizes (mapv - maxs mins)
+        uvs (mapv (fn [p] (mapv (fn [v lo size] (if (zero? size) 0.0 (/ (- v lo) size)))
+                                 p mins sizes)) projected)]
+    (assoc m :mesh/uvs uvs)))
 
 (defn quad
   "A counter-clockwise quad in the XY plane."
@@ -287,5 +306,5 @@
              :object/material (:object/material o)
              :object/mesh (mesh (mapv #(transform-point-world s (:object/id o) %)
                                      (:mesh/vertices m))
-                               (:mesh/faces m))}))
+                               (:mesh/faces m) (:mesh/uvs m))}))
         (filter :object/visible? (:scene/objects s))))

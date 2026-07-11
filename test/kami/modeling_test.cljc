@@ -112,3 +112,11 @@
     (is (= 2 (count draws)))
     (is (= red (:object/material (first draws))))
     (is (= [3.5 1.5 -0.5] (first (:mesh/vertices (:object/mesh (second draws))))))))
+
+(deftest validated-planar-uv-unwrapping
+  (let [unwrapped (m/planar-unwrap (m/quad 4 2) :z)]
+    (is (= [[0.0 0.0] [1.0 0.0] [1.0 1.0] [0.0 1.0]] (:mesh/uvs unwrapped)))
+    (is (m/valid-mesh? unwrapped))
+    (is (false? (m/valid-mesh? (assoc unwrapped :mesh/uvs [[0 0]]))))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                 (m/planar-unwrap (m/cube 1) :invalid)))))
