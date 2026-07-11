@@ -101,3 +101,58 @@
             (into (vec (concat (subvec faces 0 face-index)
                                (subvec faces (inc face-index))))
                   (concat [top-indices] sides))))))
+
+;; Scene/object editing. Mesh topology remains local to each object, allowing
+;; object and edit modes to share the same immutable command history.
+(defn object
+  ([id name object-mesh] (object id name object-mesh {}))
+  ([id name object-mesh {:keys [translation rotation scale parent visible?]
+                         :or {translation [0 0 0] rotation [0 0 0] scale [1 1 1] visible? true}}]
+   (when-not (valid-mesh? object-mesh) (throw (ex-info "object requires a valid mesh" {:id id})))
+   {:object/id id :object/name name :object/mesh object-mesh :object/parent parent
+    :object/translation (vec translation) :object/rotation (vec rotation)
+    :object/scale (vec scale) :object/visible? visible?}))
+
+(defn scene ([] (scene [])) ([objects] {:scene/objects (vec objects)}))
+(defn find-object [s id] (first (filter #(= id (:object/id %)) (:scene/objects s))))
+(defn add-object [s o]
+  (when (find-object s (:object/id o)) (throw (ex-info "object id already exists" {:id (:object/id o)})))
+  (update s :scene/objects conj o))
+(defn update-object [s id f & args]
+  (when-not (find-object s id) (throw (ex-info "object not found" {:id id})))
+  (update s :scene/objects #(mapv (fn [o] (if (= id (:object/id o)) (apply f o args) o)) %)))
+(defn delete-object [s id]
+  (-> s
+      (update :scene/objects #(vec (remove (fn [o] (= id (:object/id o))) %)))
+      (update :scene/objects #(mapv (fn [o] (if (= id (:object/parent o)) (assoc o :object/parent nil) o)) %))))
+(defn duplicate-object [s source-id new-id]
+  (let [source (find-object s source-id)]
+    (when-not source (throw (ex-info "source object not found" {:id source-id})))
+    (add-object s (-> source (assoc :object/id new-id :object/name (str (:object/name source) " Copy"))
+                      (update :object/translation #(mapv + % [0.5 0.5 0]))))))
+(defn set-object-transform [o {:keys [translation rotation scale]}]
+  (cond-> o translation (assoc :object/translation (vec translation))
+            rotation (assoc :object/rotation (vec rotation)) scale (assoc :object/scale (vec scale))))
+
+(defn- sin-value [x] #?(:clj (Math/sin x) :cljs (js/Math.sin x)))
+(defn- cos-value [x] #?(:clj (Math/cos x) :cljs (js/Math.cos x)))
+(defn transform-point
+  "Apply object scale, XYZ Euler rotation (radians), then translation."
+  [point {:object/keys [translation rotation scale]}]
+  (let [[x y z] (mapv * point scale) [rx ry rz] rotation
+        cx (cos-value rx) sx (sin-value rx) cy (cos-value ry) sy (sin-value ry) cz (cos-value rz) sz (sin-value rz)
+        [x y z] [x (- (* y cx) (* z sx)) (+ (* y sx) (* z cx))]
+        [x y z] [(+ (* x cy) (* z sy)) y (+ (* (- x) sy) (* z cy))]
+        [x y z] [(- (* x cz) (* y sz)) (+ (* x sz) (* y cz)) z]]
+    (mapv + [x y z] translation)))
+
+(defn scene-mesh
+  "Flatten visible scene objects into one indexed mesh for rendering/export."
+  [s]
+  (loop [objects (filter :object/visible? (:scene/objects s)) vertices [] faces []]
+    (if-let [o (first objects)]
+      (let [m (:object/mesh o) offset (count vertices)]
+        (recur (rest objects)
+               (into vertices (map #(transform-point % o) (:mesh/vertices m)))
+               (into faces (map #(mapv (fn [i] (+ offset i)) %) (:mesh/faces m)))))
+      (mesh vertices faces))))
