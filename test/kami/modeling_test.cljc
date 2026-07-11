@@ -45,3 +45,25 @@
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (m/add-object scene parent)))
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
                  (m/object 3 "Invalid" (m/mesh [] [[0 1 2]]))))))
+
+(deftest non-destructive-modifier-stack
+  (let [base (m/object 1 "Cube" (m/cube 2))
+        mirror (m/modifier :mirror {:axis :x})
+        array (m/modifier :array {:count 3 :offset [3 0 0]})
+        subdivision (m/modifier :subdivision {:levels 1})
+        modified (-> base (m/add-modifier mirror) (m/add-modifier array))
+        evaluated (m/evaluated-object-mesh modified)
+        reordered (m/move-modifier modified (:modifier/id array) 0)]
+    (is (= 2 (count (:object/modifiers modified))))
+    (is (= 48 (count (:mesh/vertices evaluated))))
+    (is (= 36 (count (:mesh/faces evaluated))))
+    (is (= :array (:modifier/kind (first (:object/modifiers reordered)))))
+    (is (= 1 (count (:object/modifiers (m/remove-modifier modified (:modifier/id mirror))))))
+    (is (= 26 (count (:mesh/vertices (m/evaluated-object-mesh (m/add-modifier base subdivision))))))
+    (is (= 24 (count (:mesh/faces (m/evaluated-object-mesh (m/add-modifier base subdivision))))))))
+
+(deftest modifier-primitive-validation
+  (let [cube (m/cube 2)]
+    (is (= 16 (count (:mesh/vertices (m/mirror-mesh cube :z)))))
+    (is (= 24 (count (:mesh/vertices (m/array-mesh cube 3 [2 0 0])))))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (m/array-mesh cube 0 [1 0 0])))))

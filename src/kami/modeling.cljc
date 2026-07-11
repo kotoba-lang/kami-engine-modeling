@@ -109,7 +109,7 @@
   ([id name object-mesh {:keys [translation rotation scale parent visible?]
                          :or {translation [0 0 0] rotation [0 0 0] scale [1 1 1] visible? true}}]
    (when-not (valid-mesh? object-mesh) (throw (ex-info "object requires a valid mesh" {:id id})))
-   {:object/id id :object/name name :object/mesh object-mesh :object/parent parent
+   {:object/id id :object/name name :object/mesh object-mesh :object/modifiers [] :object/parent parent
     :object/translation (vec translation) :object/rotation (vec rotation)
     :object/scale (vec scale) :object/visible? visible?}))
 
@@ -146,12 +146,67 @@
         [x y z] [(- (* x cz) (* y sz)) (+ (* x sz) (* y cz)) z]]
     (mapv + [x y z] translation)))
 
+(defn modifier
+  ([kind] (modifier kind {}))
+  ([kind options] {:modifier/id (random-uuid) :modifier/kind kind :modifier/enabled? true
+                   :modifier/options options}))
+(defn add-modifier [o mod] (update o :object/modifiers (fnil conj []) mod))
+(defn remove-modifier [o modifier-id]
+  (update o :object/modifiers #(vec (remove (fn [m] (= modifier-id (:modifier/id m))) %))))
+(defn move-modifier [o modifier-id new-index]
+  (let [mods (:object/modifiers o) target (first (filter #(= modifier-id (:modifier/id %)) mods))
+        remaining (vec (remove #(= modifier-id (:modifier/id %)) mods)) index (max 0 (min new-index (count remaining)))]
+    (if target (assoc o :object/modifiers (vec (concat (subvec remaining 0 index) [target] (subvec remaining index)))) o)))
+
+(defn mirror-mesh [m axis]
+  (let [axis-index ({:x 0 :y 1 :z 2} axis)
+        n (count (:mesh/vertices m))
+        mirrored (mapv (fn [p] (update p axis-index -)) (:mesh/vertices m))
+        faces (mapv (fn [f] (mapv #(+ n %) (reverse f))) (:mesh/faces m))]
+    (mesh (into (:mesh/vertices m) mirrored) (into (:mesh/faces m) faces))))
+
+(defn array-mesh [m copies offset]
+  (when (< copies 1) (throw (ex-info "array count must be positive" {:count copies})))
+  (let [n (count (:mesh/vertices m))]
+    (mesh (vec (mapcat (fn [copy]
+                         (map (fn [p] (mapv + p (mapv #(* copy %) offset))) (:mesh/vertices m))) (range copies)))
+          (vec (mapcat (fn [copy] (map (fn [f] (mapv #(+ (* copy n) %) f)) (:mesh/faces m))) (range copies))))))
+
+(defn subdivide-mesh
+  "One linear Catmull-Clark topology step: shared edge points plus face
+  centers, producing one quad per original face corner."
+  [m]
+  (let [vertices (atom (:mesh/vertices m)) edge-ids (atom {})
+        midpoint (fn [a b]
+                   (let [edge (if (< a b) [a b] [b a])]
+                     (if-let [id (get @edge-ids edge)] id
+                       (let [id (count @vertices) p (mapv #(/ (+ %1 %2) 2) (nth @vertices a) (nth @vertices b))]
+                         (swap! vertices conj p) (swap! edge-ids assoc edge id) id))))
+        faces (mapcat (fn [[face-index face]]
+                        (let [center-id (count @vertices)
+                              _ (swap! vertices conj (face-center m face-index))
+                              n (count face)]
+                          (mapv (fn [i]
+                                  (let [prev (nth face (mod (dec i) n)) current (nth face i) next (nth face (mod (inc i) n))]
+                                    [current (midpoint current next) center-id (midpoint prev current)])) (range n))))
+                      (map-indexed vector (:mesh/faces m)))]
+    (mesh @vertices (vec faces))))
+
+(defn apply-modifier [m {:modifier/keys [kind options enabled?]}]
+  (if (false? enabled?) m
+    (case kind
+      :mirror (mirror-mesh m (:axis options :x))
+      :subdivision (nth (iterate subdivide-mesh m) (:levels options 1))
+      :array (array-mesh m (:count options 2) (:offset options [2.5 0 0]))
+      m)))
+(defn evaluated-object-mesh [o] (reduce apply-modifier (:object/mesh o) (:object/modifiers o)))
+
 (defn scene-mesh
   "Flatten visible scene objects into one indexed mesh for rendering/export."
   [s]
   (loop [objects (filter :object/visible? (:scene/objects s)) vertices [] faces []]
     (if-let [o (first objects)]
-      (let [m (:object/mesh o) offset (count vertices)]
+      (let [m (evaluated-object-mesh o) offset (count vertices)]
         (recur (rest objects)
                (into vertices (map #(transform-point % o) (:mesh/vertices m)))
                (into faces (map #(mapv (fn [i] (+ offset i)) %) (:mesh/faces m)))))
