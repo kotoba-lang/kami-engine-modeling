@@ -187,6 +187,8 @@
     (is (= [0.35 0.58 1.0 1.0]
            (:material/base-color (:object/material (m/find-object base 1)))))
     (is (= material (:object/material (m/find-object edited 1))))
+    (let [textured (assoc material :material/base-color-texture "data:image/png;base64,iVBORw0KGgo=")]
+      (is (= textured (:object/material (m/find-object (m/set-object-material base 1 textured) 1)))))
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
                  (m/set-object-material base 1 (assoc material :material/metallic 1.5))))
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)

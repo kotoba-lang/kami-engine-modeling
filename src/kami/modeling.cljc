@@ -358,7 +358,10 @@
    (when-not (and (= 4 (count (:material/base-color material)))
                   (every? #(and (number? %) (<= 0 % 1)) (:material/base-color material))
                   (every? #(and (number? %) (<= 0 % 1))
-                          [(:material/metallic material) (:material/roughness material)]))
+                          [(:material/metallic material) (:material/roughness material)])
+                  (or (nil? (:material/base-color-texture material))
+                      (and (string? (:material/base-color-texture material))
+                           (re-find #"^data:image/(png|jpeg|webp);base64," (:material/base-color-texture material)))))
      (throw (ex-info "object requires a valid PBR material" {:id id :material material})))
    {:object/id id :object/name name :object/mesh object-mesh :object/modifiers [] :object/parent parent
     :object/translation (vec translation) :object/rotation (vec rotation)
