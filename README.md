@@ -93,7 +93,9 @@ verification adapters, tamper rejection, offline replica synchronization and
 strictly ephemeral presence. At-least-once delivery is idempotent; out-of-order
 children remain pending and converge after parent delivery/reconnect. Owner-only
 revocation and permission audits are explicit. Production key management remains
-an integration gate.
+an adapter boundary. The JVM conformance gate uses real Ed25519 keypairs to
+verify active-key signing, rotation/retirement, revocation and payload-tamper
+rejection rather than a mock signature.
 
 `kami.modeling.document` is the first shared CAD foundation: a versioned
 immutable document graph with stable UUID nodes, explicit units and modeling
@@ -102,4 +104,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 72 tests / 575 assertions).
+Run `clojure -M:test` (currently 73 tests / 582 assertions).

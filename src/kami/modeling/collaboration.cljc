@@ -123,7 +123,7 @@
 
 (defn operation-payload [op]
   ;; Stable canonical payload; signature bytes/strings are deliberately outside it.
-  (pr-str (document/canonical-form (dissoc op :operation/signature))))
+  (pr-str (document/canonical-form (dissoc op :operation/signature :operation/signature-envelope))))
 
 (defn sign-operation [op signer]
   (when-not (ifn? signer) (throw (ex-info "signature adapter must be callable" {})))
@@ -204,3 +204,51 @@
   ;; Presence must never enter revisions, operations or snapshots.
   (and (nil? (:history/presence x))
        (not-any? #(contains? % :presence/ephemeral?) (:history/operations x))))
+
+(defn public-key-record [key-id actor algorithm public-key created]
+  (when-not (and (uuid? key-id) (string? actor) (#{:ed25519 :ecdsa-p256} algorithm)
+                 (some? public-key) (integer? created))
+    (throw (ex-info "invalid public key record" {:key-id key-id :actor actor :algorithm algorithm})))
+  {:key/id key-id :key/actor actor :key/algorithm algorithm :key/public public-key
+   :key/created created :key/status :active})
+
+(defn keyring [records]
+  {:keyring/keys (into {} (map (juxt :key/id identity) records))})
+
+(defn rotate-key [keyring actor new-record]
+  (when-not (= actor (:key/actor new-record)) (throw (ex-info "rotation actor mismatch" {})))
+  (-> keyring
+      (update :keyring/keys (fn [keys]
+                              (into {} (map (fn [[id record]]
+                                              [id (if (and (= actor (:key/actor record)) (= :active (:key/status record)))
+                                                    (assoc record :key/status :retired) record)]) keys))))
+      (assoc-in [:keyring/keys (:key/id new-record)] new-record)))
+
+(defn revoke-key [keyring key-id reason logical-time]
+  (when-not (get-in keyring [:keyring/keys key-id]) (throw (ex-info "key not found" {:key-id key-id})))
+  (update-in keyring [:keyring/keys key-id] assoc :key/status :revoked
+             :key/revocation-reason reason :key/revoked-at logical-time))
+
+(defn sign-operation-with-key [op key-record signer]
+  (when-not (and (= :active (:key/status key-record)) (= (:operation/actor op) (:key/actor key-record)))
+    (throw (ex-info "operation cannot use inactive or foreign key" {:key (:key/id key-record)})))
+  (let [payload (operation-payload op)
+        signature (signer key-record payload)]
+    (when-not (and (string? signature) (seq signature)) (throw (ex-info "key signer returned invalid signature" {})))
+    (assoc op :operation/signature-envelope {:signature/key-id (:key/id key-record)
+                                              :signature/algorithm (:key/algorithm key-record)
+                                              :signature/value signature})))
+
+(defn verify-operation-with-keyring [op keyring verifier]
+  (let [{:signature/keys [key-id algorithm value]} (:operation/signature-envelope op)
+        record (get-in keyring [:keyring/keys key-id])]
+    (and record (= :active (:key/status record)) (= algorithm (:key/algorithm record))
+         (= (:operation/actor op) (:key/actor record))
+         (boolean (verifier record (operation-payload op) value)))))
+
+(defn append-keyring-operation [history policy op keyring verifier]
+  (when-not (authorized? policy (:operation/actor op) (:operation/command op))
+    (throw (ex-info "operation is not authorized" {:actor (:operation/actor op)})))
+  (when-not (verify-operation-with-keyring op keyring verifier)
+    (throw (ex-info "keyring signature verification failed" {:operation (:operation/id op)})))
+  (append-operation-idempotent history op))
