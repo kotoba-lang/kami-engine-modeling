@@ -22,6 +22,16 @@
     (is (= 0 (m/pick-face base [0 0 -4] [0 0 1])))
     (is (m/valid-mesh? (m/scale-face base 1 0.5)))))
 
+(deftest winding-controls-geometric-normals-and-outward-orientation
+  (let [base (m/cube 2) flipped (m/flip-faces base [1]) reversed (m/flip-faces base (range 6))]
+    (is (= [0.0 0.0 1.0] (m/face-normal base 1)))
+    (is (= [0.0 0.0 -1.0] (m/face-normal flipped 1)))
+    (is (pos? (m/signed-volume base)))
+    (is (neg? (m/signed-volume reversed)))
+    (is (pos? (m/signed-volume (m/orient-outward reversed))))
+    (is (= (:mesh/uvs base) (:mesh/uvs flipped)))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/orient-outward (m/quad 2 2))))))
+
 (deftest face-bevel-builds-a-valid-chamfer-ring
   (let [base (m/cube 2)
         beveled (m/bevel-face base 1 0.25 0.2)]

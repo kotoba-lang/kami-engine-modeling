@@ -264,6 +264,16 @@
 (defn delete-face [m face-index]
   (update m :mesh/faces #(vec (concat (subvec % 0 face-index) (subvec % (inc face-index))))))
 
+(defn flip-faces
+  "Reverse selected polygon windings, changing geometric and exported normals
+  without duplicating vertices or discarding UVs."
+  [m face-indices]
+  (let [face-count (count (:mesh/faces m)) ids (set face-indices)]
+    (when (empty? ids) (throw (ex-info "at least one face must be selected" {})))
+    (when-not (every? #(< -1 % face-count) ids)
+      (throw (ex-info "face index out of bounds" {:indices ids :face-count face-count})))
+    (update m :mesh/faces #(mapv (fn [index face] (if (ids index) (vec (reverse face)) face)) (range) %))))
+
 (defn triangulate-face-indices [face]
   (mapv (fn [i] [(first face) (nth face i) (nth face (inc i))]) (range 1 (dec (count face)))))
 
@@ -271,6 +281,19 @@
 (defn- cross [[ax ay az] [bx by bz]] [(- (* ay bz) (* az by)) (- (* az bx) (* ax bz)) (- (* ax by) (* ay bx))])
 (defn- dot [a b] (reduce + (map * a b)))
 (defn- abs-value [x] #?(:clj (Math/abs (double x)) :cljs (js/Math.abs x)))
+(defn signed-volume
+  "Signed volume of a closed polygon mesh. Positive means outward winding."
+  [{:mesh/keys [vertices faces]}]
+  (/ (reduce + (mapcat (fn [face]
+                         (map (fn [[a b c]]
+                                (dot (nth vertices a) (cross (nth vertices b) (nth vertices c))))
+                              (triangulate-face-indices face))) faces)) 6.0))
+
+(defn orient-outward [m]
+  (let [volume (signed-volume m)]
+    (when (< (abs-value volume) 1.0e-12)
+      (throw (ex-info "cannot orient a zero-volume or open mesh" {:signed-volume volume})))
+    (if (neg? volume) (flip-faces m (range (count (:mesh/faces m)))) m)))
 (defn- ray-triangle [origin direction a b c]
   (let [e1 (vsub b a) e2 (vsub c a) h (cross direction e2) det (dot e1 h)]
     (when (> (abs-value det) 1.0e-8)
