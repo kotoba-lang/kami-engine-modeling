@@ -30,3 +30,19 @@
   (is (thrown? #?(:clj Exception :cljs js/Error)
                (nurbs/curve {:degree 1 :knots [0 0 1 1] :control-points [[0 0 0] [1 0 0]]
                              :weights [1 0]}))))
+
+(deftest trimmed-surface-removes-inner-domain-and-retains-provenance
+  (let [surface (nurbs/surface {:u-degree 1 :v-degree 1 :u-knots [0 0 1 1] :v-knots [0 0 1 1]
+                                :control-net [[[0 0 0] [1 0 0]] [[0 1 0] [1 1 0]]]})
+        outer (nurbs/trim-loop #uuid "00000000-0000-5000-a000-000000000001"
+                               [[0 0] [1 0] [1 1] [0 1]] :outer)
+        hole (nurbs/trim-loop #uuid "00000000-0000-5000-a000-000000000002"
+                              [[0.25 0.25] [0.75 0.25] [0.75 0.75] [0.25 0.75]] :inner)
+        trimmed (nurbs/trimmed-surface surface outer [hole])
+        mesh (nurbs/tessellate-trimmed-surface trimmed 4 4)]
+    (is (nurbs/inside-trim? trimmed [0.1 0.1]))
+    (is (false? (nurbs/inside-trim? trimmed [0.5 0.5])))
+    (is (= 12 (count (:mesh/faces mesh))))
+    (is (= :trimmed-nurbs-surface (get-in mesh [:mesh/source :kind])))
+    (is (= [(:trim/id hole)] (get-in mesh [:mesh/source :trim/inner])))
+    (is (modeling/valid-mesh? mesh))))

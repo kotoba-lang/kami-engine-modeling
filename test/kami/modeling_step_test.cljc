@@ -21,3 +21,12 @@
         injected (string/replace valid "DATA;" "DATA;\n#999=BOGUS_ENTITY();")]
     (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"unsupported STEP entities"
                           (step/import-body injected)))))
+
+(deftest hundred-file-internal-ap242-corpus-round-trip
+  (doseq [i (range 1 101)]
+    (let [source (brep/box-body (str "step/corpus/" i) i (+ i 0.5) (+ i 1.25) 1.0e-6)
+          encoded (step/export-body source {:name (str "Corpus box " i)})
+          decoded (step/import-body encoded)]
+      (is (brep/valid-body? decoded) (str "valid topology for corpus item " i))
+      (is (= [8 12 6] [(count (:brep/vertices decoded)) (count (:brep/edges decoded))
+                       (count (:brep/faces decoded))]) (str "entity counts for corpus item " i)))))

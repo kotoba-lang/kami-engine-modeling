@@ -90,3 +90,58 @@
                      [(index j i) (index j (inc i)) (index (inc j) (inc i)) (index (inc j) i)]))]
     (assoc (modeling/mesh vertices faces) :mesh/source {:kind :nurbs-surface
                                                         :u-segments u-segments :v-segments v-segments})))
+
+(defn trim-loop
+  "Closed polygonal loop in surface parameter space. Curved p-curves can be
+  adaptively sampled into this canonical portable representation."
+  [id points orientation]
+  (when-not (and (uuid? id) (<= 3 (count points))
+                 (every? #(and (vector? %) (= 2 (count %)) (every? number? %)) points)
+                 (#{:outer :inner} orientation))
+    (throw (ex-info "invalid NURBS trim loop" {:id id :orientation orientation})))
+  {:trim/id id :trim/points (vec points) :trim/orientation orientation})
+
+(defn trimmed-surface [surface outer-loop inner-loops]
+  (when-not (and (= :surface (:nurbs/kind surface)) (= :outer (:trim/orientation outer-loop))
+                 (every? #(= :inner (:trim/orientation %)) inner-loops))
+    (throw (ex-info "trimmed surface requires one outer and zero-or-more inner loops" {})))
+  {:nurbs/kind :trimmed-surface :trim/surface surface :trim/outer outer-loop :trim/inner (vec inner-loops)})
+
+(defn- point-on-segment? [[px py] [ax ay] [bx by] tolerance]
+  (let [cross (- (* (- px ax) (- by ay)) (* (- py ay) (- bx ax)))
+        dot-product (+ (* (- px ax) (- bx ax)) (* (- py ay) (- by ay)))
+        length2 (+ (* (- bx ax) (- bx ax)) (* (- by ay) (- by ay)))]
+    (and (<= (#?(:clj Math/abs :cljs js/Math.abs) cross) tolerance)
+         (<= (- tolerance) dot-product (+ length2 tolerance)))))
+
+(defn point-in-trim?
+  ([loop point] (point-in-trim? loop point 1.0e-9))
+  ([{:trim/keys [points]} [x y :as point] tolerance]
+   (let [segments (map vector points (concat (rest points) [(first points)]))
+         crosses? (fn [[[xi yi] [xj yj]]]
+                    (and (not= (> yi y) (> yj y))
+                         (< x (+ xi (/ (* (- xj xi) (- y yi)) (- yj yi))))))]
+     (if (some (fn [[a b]] (point-on-segment? point a b tolerance)) segments)
+       true
+       (odd? (count (filter crosses? segments)))))))
+
+(defn inside-trim? [{:trim/keys [outer inner]} uv]
+  (and (point-in-trim? outer uv) (not-any? #(point-in-trim? % uv) inner)))
+
+(defn tessellate-trimmed-surface [trimmed u-segments v-segments]
+  (when-not (= :trimmed-surface (:nurbs/kind trimmed))
+    (throw (ex-info "expected trimmed NURBS surface" {})))
+  (let [surface (:trim/surface trimmed) [u0 u1] (:nurbs/u-domain surface) [v0 v1] (:nurbs/v-domain surface)
+        uv (fn [j i] [(+ u0 (* (/ i u-segments) (- u1 u0)))
+                      (+ v0 (* (/ j v-segments) (- v1 v0)))])
+        vertices (vec (for [j (range (inc v-segments)) i (range (inc u-segments))]
+                        (let [[u v] (uv j i)] (evaluate-surface surface u v))))
+        index (fn [j i] (+ i (* j (inc u-segments))))
+        cells (for [j (range v-segments) i (range u-segments)
+                    :let [center-uv (mapv #(/ (+ %1 %2) 2.0) (uv j i) (uv (inc j) (inc i)))]
+                    :when (inside-trim? trimmed center-uv)]
+                [(index j i) (index j (inc i)) (index (inc j) (inc i)) (index (inc j) i)])]
+    (assoc (modeling/mesh vertices (vec cells))
+           :mesh/source {:kind :trimmed-nurbs-surface :trim/outer (get-in trimmed [:trim/outer :trim/id])
+                         :trim/inner (mapv :trim/id (:trim/inner trimmed))
+                         :u-segments u-segments :v-segments v-segments})))
