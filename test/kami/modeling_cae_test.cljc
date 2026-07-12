@@ -105,3 +105,25 @@
     (is (= 17 (count (get-in (last results) [:result/modes 0 :mode/shape]))))
     (is (zero? (get-in (last results) [:result/modes 0 :mode/shape 0])))
     (is (= :verified (:result/qualification (last results))))))
+
+(deftest independent-adapter-comparison-and-qualified-manifest
+  (let [study (bar-study 8)
+        candidate (cae/solve-linear-static-bar study)
+        ;; External adapters enter through this solver-neutral result contract.
+        reference (assoc candidate :result/adapter {:adapter/id "calculix" :adapter/version "2.22"}
+                                   :result/displacement (mapv #(+ % 1.0e-14) (:result/displacement candidate)))
+        comparison (cae/compare-result-fields candidate reference :result/displacement 1.0e-12 1.0e-8)
+        manifest (cae/qualification-manifest
+                  study candidate reference [comparison]
+                  {:evidence/source "CalculiX ccx 2.22 result fixture"
+                   :evidence/license "GPL-2.0-or-later" :evidence/case "uniaxial-bar-8"})]
+    (is (:comparison/pass? comparison))
+    (is (= 9 (count (:comparison/samples comparison))))
+    (is (= :qualified (:qualification/status manifest)))
+    (is (string? (:qualification/revision manifest)))
+    (is (thrown? #?(:clj Exception :cljs js/Error)
+                 (cae/compare-result-fields candidate candidate :result/displacement 1.0e-12 1.0e-8)))
+    (is (thrown? #?(:clj Exception :cljs js/Error)
+                 (cae/qualification-manifest study candidate reference
+                                             [(assoc comparison :comparison/pass? false)]
+                                             {:evidence/source "x" :evidence/license "x"})))))

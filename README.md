@@ -77,6 +77,13 @@ balance, verified against the analytic linear temperature field.
 It also supports first-mode axial bar analysis using consistent mass and a
 generalized eigen solve; 2/4/8/16-element refinement converges monotonically to
 the fixed-free analytic frequency, reaching below 0.1% relative error.
+Independent solver results can now be compared field-by-field with absolute and
+relative tolerances. A qualification manifest records candidate/reference
+adapter versions, evidence source/license, comparison samples and a stable
+revision, and cannot be emitted for failed or same-adapter comparisons. The
+checked test exercises the CalculiX-shaped adapter contract; an independently
+generated public result corpus is still required before claiming external
+solver qualification.
 
 `kami.modeling.feature-graph` generalizes the linear modifier stack into a typed
 dependency DAG with cycle/type diagnostics, deterministic cache keys, partial
@@ -118,4 +125,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 78 tests / 611 assertions).
+Run `clojure -M:test` (currently 79 tests / 617 assertions).

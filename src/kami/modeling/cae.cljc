@@ -385,3 +385,47 @@
      :result/displacement-3d (mapv vec (partition 3 displacement)) :result/reactions reactions :result/elements results
      :result/balance {:applied (mapv #(component-sum forces %) (range 3))
                       :reaction (mapv #(reduce + (map (fn [i] (get reactions i 0)) (range % dof-count 3))) (range 3))}}))
+
+(defn compare-result-fields
+  "Compare flattened numeric result fields from independent adapters. Both an
+  absolute and relative tolerance are enforced per value."
+  [candidate reference field absolute-tolerance relative-tolerance]
+  (when-not (and (keyword? field) (not= (get-in candidate [:result/adapter :adapter/id])
+                                         (get-in reference [:result/adapter :adapter/id]))
+                 (every? #(and (number? %) (not (neg? %))) [absolute-tolerance relative-tolerance]))
+    (throw (ex-info "comparison requires independent adapters and non-negative tolerances" {})))
+  (let [flatten-numbers (fn flatten-numbers [x]
+                          (cond (number? x) [x] (sequential? x) (mapcat flatten-numbers x) :else []))
+        actual (vec (flatten-numbers (get candidate field)))
+        expected (vec (flatten-numbers (get reference field)))]
+    (when-not (= (count actual) (count expected))
+      (throw (ex-info "result field shape mismatch" {:field field :actual (count actual) :reference (count expected)})))
+    (let [samples (mapv (fn [index a e]
+                          (let [absolute-error (absolute (- a e))
+                                relative-error (/ absolute-error (max 1.0e-30 (absolute e)))
+                                pass? (or (<= absolute-error absolute-tolerance)
+                                          (<= relative-error relative-tolerance))]
+                            {:sample/index index :sample/actual a :sample/reference e
+                             :sample/absolute-error absolute-error :sample/relative-error relative-error
+                             :sample/pass? pass?}))
+                        (range) actual expected)]
+      {:comparison/field field :comparison/samples samples
+       :comparison/max-absolute-error (apply max 0 (map :sample/absolute-error samples))
+       :comparison/max-relative-error (apply max 0 (map :sample/relative-error samples))
+       :comparison/pass? (every? :sample/pass? samples)})))
+
+(defn qualification-manifest [study candidate reference comparisons evidence]
+  (when-not (and (uuid? (:study/id study)) (seq comparisons)
+                 (every? :comparison/pass? comparisons)
+                 (string? (:evidence/source evidence)) (string? (:evidence/license evidence)))
+    (throw (ex-info "qualification evidence is incomplete or failed" {:comparisons comparisons :evidence evidence})))
+  {:qualification/schema 1 :qualification/study (:study/id study)
+   :qualification/source-revision (:study/source-revision study)
+   :qualification/candidate-adapter (:result/adapter candidate)
+   :qualification/reference-adapter (:result/adapter reference)
+   :qualification/comparisons (vec comparisons) :qualification/evidence evidence
+   :qualification/status :qualified
+   :qualification/revision (document/revision-id
+                            {:study (:study/id study) :source (:study/source-revision study)
+                             :candidate (:result/adapter candidate) :reference (:result/adapter reference)
+                             :comparisons comparisons :evidence evidence})})
