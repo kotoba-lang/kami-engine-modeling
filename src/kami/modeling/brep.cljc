@@ -54,7 +54,8 @@
 (defn face [id surface outer-loop inner-loops orientation]
   (when-not (and (uuid? id) (map? surface) (uuid? outer-loop)
                  (every? uuid? inner-loops) (#{:forward :reversed} orientation))
-    (throw (ex-info "invalid B-rep face" {:id id})))
+    (throw (ex-info "invalid B-rep face" {:id id :surface surface :outer-loop outer-loop
+                                           :inner-loops inner-loops :orientation orientation})))
   {:face/id id :face/surface surface :face/outer-loop outer-loop
    :face/inner-loops (vec inner-loops) :face/orientation orientation})
 

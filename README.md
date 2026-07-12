@@ -17,11 +17,18 @@ provenance on derived meshes. Near-duplicate vertices are rewired explicitly;
 degenerate results fail with diagnostics. It does
 not yet claim a complete feature kernel or production assembly, manufacturing
 drawing or qualified CAE support. `kami.modeling.step` implements a fail-closed ISO
-10303-21 AP203/AP214/AP242-profile geometric subset for planar, line-edged closed B-rep topology;
+10303-21 AP203/AP214/AP242-profile geometric subset for closed B-rep topology,
+including periodic circle/B-spline edges and plane/cylinder/torus surfaces;
 its deterministic internal gate round-trips 100 generated closed bodies. This
 is complemented by a real NIST FTC-11 geometry-only AP203 fixture covering
 periodic circles, one-edge loops, inner bounds, planes, cylinders, tori and a
-closed shell. It is still not full AP242 conformance. The shared document graph, adapter
+closed shell. The AP242 semantic-PMI adapter imports dimensions, bilateral
+tolerances, datums and ordered datum systems, validates their references and
+fails closed when a supported profile contains no solid. An external audit with
+the official NIST FTC-11 AP242-e2 file imports a valid 72-vertex, 104-edge,
+42-face closed B-rep together with 6 dimensions, 4 tolerances, 2 datums and one
+datum system. This is an implemented and tested subset, not a claim of full
+AP242 conformance. The shared document graph, adapter
 boundaries and 1/5–5/5 gates
 are defined in
 [`kami-engine` ADR-0049](../kami-engine/90-docs/adr/0049-kotoba-3d-suite-commercial-cad-maturity.md).
@@ -105,4 +112,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 74 tests / 592 assertions).
+Run `clojure -M:test` (currently 76 tests / 599 assertions).

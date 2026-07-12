@@ -58,7 +58,7 @@
 
 (defn- entity-lines [text]
   (into {} (keep (fn [[_ id expr]] [(parse-long id) expr])
-                 (re-seq #"(?m)^#([0-9]+)=(.+);$" text))))
+                 (re-seq #"(?s)#([0-9]+)=(.*?);" text))))
 (defn- refs [s] (mapv (comp parse-long second) (re-seq #"#([0-9]+)" s)))
 (defn- bool-value [s] (if (string/includes? s ".F.") :reversed :forward))
 (def ^:private metadata-entities
@@ -70,9 +70,24 @@
     "ADVANCED_BREP_SHAPE_REPRESENTATION" "SHAPE_REPRESENTATION_RELATIONSHIP"
     "COLOUR_RGB" "FILL_AREA_STYLE" "FILL_AREA_STYLE_COLOUR" "PRESENTATION_STYLE_ASSIGNMENT"
     "MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION" "STYLED_ITEM" "SURFACE_SIDE_STYLE"
-    "SURFACE_STYLE_FILL_AREA" "SURFACE_STYLE_USAGE"})
+    "SURFACE_STYLE_FILL_AREA" "SURFACE_STYLE_USAGE"
+    "ANNOTATION_PLANE" "CAMERA_MODEL_D3" "CAMERA_MODEL_D3_MULTI_CLIPPING" "COLOUR" "CURVE_STYLE"
+    "DATUM" "DATUM_REFERENCE_COMPARTMENT" "DATUM_SYSTEM" "DEFAULT_MODEL_GEOMETRIC_VIEW"
+    "DESCRIPTIVE_REPRESENTATION_ITEM" "DIMENSIONAL_CHARACTERISTIC_REPRESENTATION"
+    "DIMENSIONAL_LOCATION" "DIMENSIONAL_SIZE" "DRAUGHTING_CALLOUT" "DRAUGHTING_MODEL_ITEM_ASSOCIATION"
+    "DRAUGHTING_PRE_DEFINED_COLOUR" "DRAUGHTING_PRE_DEFINED_CURVE_FONT" "GEOMETRIC_ITEM_SPECIFIC_USAGE"
+    "ID_ATTRIBUTE" "MAPPED_ITEM" "MEASURE_QUALIFICATION" "MEASURE_WITH_UNIT"
+    "MECHANICAL_DESIGN_AND_DRAUGHTING_RELATIONSHIP" "PLANAR_BOX" "PLUS_MINUS_TOLERANCE"
+    "PRODUCT_CATEGORY" "PROPERTY_DEFINITION" "PROPERTY_DEFINITION_REPRESENTATION" "REPRESENTATION"
+    "REPRESENTATION_MAP" "SHAPE_ASPECT" "SHAPE_ASPECT_RELATIONSHIP" "SHAPE_DIMENSION_REPRESENTATION"
+    "TESSELLATED_ANNOTATION_OCCURRENCE" "TESSELLATED_CURVE_SET" "TOLERANCE_VALUE" "TYPE_QUALIFIER"
+    "VALUE_FORMAT_TYPE_QUALIFIER" "VIEW_VOLUME" "COMPLEX_TRIANGULATED_SURFACE_SET"
+    "COMPOSITE_GROUP_SHAPE_ASPECT" "CONSTRUCTIVE_GEOMETRY_REPRESENTATION"
+    "CONSTRUCTIVE_GEOMETRY_REPRESENTATION_RELATIONSHIP" "COORDINATES_LIST" "DATUM_FEATURE"
+    "PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE"})
 (def ^:private geometry-entities
-  #{"CARTESIAN_POINT" "VERTEX_POINT" "CIRCLE" "EDGE_CURVE" "ORIENTED_EDGE" "EDGE_LOOP"
+  #{"CARTESIAN_POINT" "VERTEX_POINT" "CIRCLE" "LINE" "VECTOR" "B_SPLINE_CURVE_WITH_KNOTS"
+    "EDGE_CURVE" "ORIENTED_EDGE" "EDGE_LOOP"
     "FACE_OUTER_BOUND" "FACE_BOUND" "ADVANCED_FACE" "PLANE" "CYLINDRICAL_SURFACE"
     "TOROIDAL_SURFACE" "CLOSED_SHELL" "MANIFOLD_SOLID_BREP"})
 
@@ -83,9 +98,56 @@
     {:step/profile profile :step/entity-count (count entities) :step/entities kinds
      :step/unsupported (vec (sort (remove (into metadata-entities geometry-entities) (keys kinds))))}))
 
+(defn import-pmi [text]
+  (let [entities (entity-lines text) kind (fn [expr] (second (re-find #"^([A-Z0-9_]+)\(" expr)))
+        quoted (fn [expr] (mapv second (re-seq #"'([^']*)'" expr)))
+        measures (into {} (for [[id expr] entities :when (= "MEASURE_WITH_UNIT" (kind expr))]
+                            [id (parse-double (second (re-find #"MEASURE\(([-+0-9Ee.]+)\)" expr)))]))
+        tolerance-values (into {} (for [[id expr] entities :when (= "TOLERANCE_VALUE" (kind expr))]
+                                    (let [[lower upper] (refs expr)] [id {:lower (get measures lower) :upper (get measures upper)}])))
+        dimensions (into {} (for [[id expr] entities
+                                  :when (#{"DIMENSIONAL_SIZE" "DIMENSIONAL_LOCATION"} (kind expr))]
+                              (let [labels (quoted expr)]
+                                [id {:pmi/id id :pmi/kind (if (= "DIMENSIONAL_SIZE" (kind expr)) :size :location)
+                                     :pmi/name (first labels) :pmi/description (second labels)
+                                     :pmi/references (refs expr)}])))
+        tolerances (vec (for [[id expr] entities :when (= "PLUS_MINUS_TOLERANCE" (kind expr))]
+                          (let [[value-ref dimension-ref] (refs expr)]
+                            {:pmi/id id :pmi/kind :plus-minus :pmi/dimension dimension-ref
+                             :pmi/value (get tolerance-values value-ref)})))
+        datums (into {} (for [[id expr] entities :when (= "DATUM" (kind expr))]
+                          [id {:pmi/id id :pmi/kind :datum :pmi/label (last (quoted expr))}]))
+        compartments (into {} (for [[id expr] entities :when (= "DATUM_REFERENCE_COMPARTMENT" (kind expr))]
+                                [id (last (filter datums (refs expr)))]))
+        systems (vec (for [[id expr] entities :when (= "DATUM_SYSTEM" (kind expr))]
+                       {:pmi/id id :pmi/kind :datum-system
+                        :pmi/datums (mapv #(get-in datums [(get compartments %) :pmi/label])
+                                          (filter compartments (refs expr)))}))]
+    {:pmi/dimensions (mapv dimensions (sort (keys dimensions)))
+     :pmi/tolerances (vec (sort-by :pmi/id tolerances))
+     :pmi/datums (mapv datums (sort (keys datums)))
+     :pmi/datum-systems (vec (sort-by :pmi/id systems))
+     :pmi/source-profile (:step/profile (inspect-file text))}))
+
+(defn pmi-validation-errors
+  "Returns semantic AP242 PMI reference/value errors without throwing."
+  [{:pmi/keys [dimensions tolerances datums datum-systems source-profile]}]
+  (let [dimension-ids (set (map :pmi/id dimensions)) datum-labels (set (map :pmi/label datums))]
+    (vec
+     (concat
+      (when-not (= :ap242 source-profile) [{:error :non-ap242-pmi-profile :profile source-profile}])
+      (for [{:pmi/keys [id dimension]} tolerances :when (not (dimension-ids dimension))]
+        {:error :dangling-tolerance-dimension :tolerance id :dimension dimension})
+      (for [{:pmi/keys [id value]} tolerances
+            :when (or (not (number? (:lower value))) (not (number? (:upper value)))
+                      (> (:lower value ##Inf) (:upper value ##-Inf)))]
+        {:error :invalid-tolerance-value :tolerance id :value value})
+      (for [{:pmi/keys [id datums]} datum-systems, label datums :when (not (datum-labels label))]
+        {:error :dangling-datum-reference :datum-system id :datum label})))))
+
 (defn import-body [text]
   (let [matched-profile (first (keep (fn [[profile schema-name]]
-                                       (when (string/includes? text (str "FILE_SCHEMA(('" schema-name "'))")) profile)) schemas))]
+                                       (when (string/includes? text schema-name) profile)) schemas))]
     (when-not (and (string/starts-with? text "ISO-10303-21;") matched-profile)
       (throw (ex-info "unsupported or malformed STEP header" {:supported-schemas schemas})))
   (let [entities (entity-lines text)
@@ -102,10 +164,12 @@
                           [id (brep/vertex vid (get points point-id) 1.0e-6)])))
           circles (into {} (for [[id expr] entities :when (= "CIRCLE" (kind expr))]
                              [id {:curve/kind :circle :curve/radius (parse-double (second (re-find #",([-+0-9Ee.]+)\)$" expr)))}]))
+          splines (into {} (for [[id expr] entities :when (= "B_SPLINE_CURVE_WITH_KNOTS" (kind expr))]
+                             [id {:curve/kind :periodic :curve/step-entity id}]))
           es (into {} (for [[id expr] entities :when (= "EDGE_CURVE" (kind expr))]
                         (let [[a b curve-ref] (refs expr)]
                           [id (brep/edge (uid (str "e/" id)) (:vertex/id (get vs a)) (:vertex/id (get vs b))
-                                         (get circles curve-ref {:curve/kind :line}))])))
+                                         (or (get circles curve-ref) (get splines curve-ref) {:curve/kind :line}))])))
           oes (into {} (for [[id expr] entities :when (= "ORIENTED_EDGE" (kind expr))]
                          (let [edge-id (first (refs expr))]
                            [id (brep/coedge (:edge/id (get es edge-id)) (bool-value expr))])))
@@ -125,7 +189,8 @@
           fs (into {} (for [[id expr] entities :when (= "ADVANCED_FACE" (kind expr))]
                         (let [all-refs (refs expr) bound-ids (filterv bounds all-refs)
                               surface-id (first (filter surfaces all-refs))
-                              outer-bound (first (filter #(get-in bounds [% :outer?]) bound-ids))
+                              outer-bound (or (first (filter #(get-in bounds [% :outer?]) bound-ids))
+                                              (first bound-ids))
                               inner-bounds (remove #{outer-bound} bound-ids)
                               loop (get ls (get-in bounds [outer-bound :loop]))]
                           [id (brep/face (uid (str "f/" id))
@@ -134,8 +199,14 @@
                                          (bool-value expr))])))
           ss (into {} (for [[id expr] entities :when (= "CLOSED_SHELL" (kind expr))]
                         [id (brep/shell (uid (str "s/" id)) (mapv #(get-in fs [% :face/id]) (refs expr)) true)]))
-          solid (first (for [[id expr] entities :when (= "MANIFOLD_SOLID_BREP" (kind expr))] [id expr]))
+          solid (first (sort-by first (for [[id expr] entities :when (= "MANIFOLD_SOLID_BREP" (kind expr))] [id expr])))
+          _ (when-not solid
+              (throw (ex-info "STEP file has no supported solid body"
+                              {:required "MANIFOLD_SOLID_BREP" :profile matched-profile})))
           shell-ref (first (refs (second solid)))
+          _ (when-not (get ss shell-ref)
+              (throw (ex-info "STEP solid references no imported closed shell"
+                              {:solid (first solid) :shell shell-ref})))
           result (brep/body (uid (str "body/" (first solid))) (vals vs) (vals es) (vals ls) (vals fs) [(get ss shell-ref)])]
       (when-not (brep/valid-body? result)
         (throw (ex-info "imported STEP topology is invalid" {:errors (brep/validation-errors result)})))

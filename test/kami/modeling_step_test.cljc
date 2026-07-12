@@ -22,6 +22,34 @@
     (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"unsupported STEP entities"
                           (step/import-body injected)))))
 
+(deftest empty-supported-profile-fails-closed
+  (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"no supported solid body"
+                        (step/import-body
+                         "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF'));\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;"))))
+
+(deftest ap242-semantic-pmi-import-and-validation
+  (let [text (str "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF'));\nENDSEC;\nDATA;\n"
+                  "#10=SHAPE_ASPECT('feature',$,$,.T.);\n"
+                  "#20=DIMENSIONAL_SIZE(#10,'diameter');\n"
+                  "#30=MEASURE_WITH_UNIT(LENGTH_MEASURE(-0.08),#90);\n"
+                  "#31=MEASURE_WITH_UNIT(LENGTH_MEASURE(0.08),#90);\n"
+                  "#40=TOLERANCE_VALUE(#30,#31);\n"
+                  "#41=PLUS_MINUS_TOLERANCE(#40,#20);\n"
+                  "#50=DATUM('','',#10,.T.,'A');\n"
+                  "#51=DATUM_REFERENCE_COMPARTMENT('','',#50);\n"
+                  "#52=DATUM_SYSTEM('','',(#51));\nENDSEC;\nEND-ISO-10303-21;")
+        pmi (step/import-pmi text)]
+    (is (= :ap242 (:pmi/source-profile pmi)))
+    (is (= [{:pmi/id 20 :pmi/kind :size :pmi/name "diameter" :pmi/description nil
+             :pmi/references [10]}]
+           (:pmi/dimensions pmi)))
+    (is (= {:lower -0.08 :upper 0.08} (get-in pmi [:pmi/tolerances 0 :pmi/value])))
+    (is (= ["A"] (get-in pmi [:pmi/datum-systems 0 :pmi/datums])))
+    (is (empty? (step/pmi-validation-errors pmi)))
+    (is (= :dangling-tolerance-dimension
+           (:error (first (step/pmi-validation-errors
+                           (assoc-in pmi [:pmi/tolerances 0 :pmi/dimension] 999))))))))
+
 (deftest hundred-file-internal-ap242-corpus-round-trip
   (doseq [i (range 1 101)]
     (let [source (brep/box-body (str "step/corpus/" i) i (+ i 0.5) (+ i 1.25) 1.0e-6)
