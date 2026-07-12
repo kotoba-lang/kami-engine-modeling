@@ -39,3 +39,17 @@
     (is (thrown? #?(:clj Exception :cljs js/Error) (cae/solve-linear-static-bar broken)))
     (is (thrown? #?(:clj Exception :cljs js/Error)
                  (cae/isotropic-material (uid "bad") {:name "Bad" :youngs-modulus -1 :poisson-ratio 0.3})))))
+
+(deftest two-dimensional-truss-parity-stress-and-reaction-balance
+  (let [mesh (cae/truss-mesh-2d [[0 0] [2 0]] [{:element/a 0 :element/b 1 :element/area 0.01}])
+        study (cae/study (uid "truss-2d") "model-r1" :linear-static mesh steel
+                         [(cae/fixed-displacement-2d 0 :x 0) (cae/fixed-displacement-2d 0 :y 0)
+                          (cae/fixed-displacement-2d 1 :y 0)]
+                         [(cae/nodal-force-2d 1 [10000 0])] adapter)
+        result (cae/solve-linear-static-truss-2d study)
+        expected (cae/analytic-bar-displacement 10000 2 200.0e9 0.01)]
+    (is (< (Math/abs (- expected (get-in result [:result/displacement-2d 1 0]))) 1.0e-12))
+    (is (< (Math/abs (- 1.0e6 (get-in result [:result/elements 0 :element/stress]))) 1.0e-6))
+    (is (every? true? (map == [10000 0.0] (get-in result [:result/balance :applied]))))
+    (is (every? true? (map == [-10000.0 0.0] (get-in result [:result/balance :reaction]))))
+    (is (= :verified (:result/qualification result)))))

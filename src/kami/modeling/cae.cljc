@@ -6,6 +6,7 @@
 (def analysis-kinds #{:linear-static :steady-thermal})
 (def qualification-levels #{:experimental :verified :qualified})
 (defn- absolute [x] (#?(:clj Math/abs :cljs js/Math.abs) x))
+(defn- square-root [x] (#?(:clj Math/sqrt :cljs js/Math.sqrt) x))
 
 (defn isotropic-material [id {:keys [name youngs-modulus poisson-ratio density thermal-conductivity]}]
   (when-not (and (uuid? id) (seq name) (number? youngs-modulus) (pos? youngs-modulus)
@@ -43,6 +44,28 @@
 (defn nodal-force [node value]
   (when-not (and (integer? node) (number? value)) (throw (ex-info "invalid nodal force" {})))
   {:load/kind :force :load/node node :load/value value})
+
+(defn truss-mesh-2d [nodes elements]
+  (when-not (and (<= 2 (count nodes))
+                 (every? #(and (= 2 (count %)) (every? number? %)) nodes)
+                 (seq elements)
+                 (every? #(and (integer? (:element/a %)) (integer? (:element/b %))
+                               (not= (:element/a %) (:element/b %))
+                               (< -1 (:element/a %) (count nodes)) (< -1 (:element/b %) (count nodes))
+                               (number? (:element/area %)) (pos? (:element/area %))) elements))
+    (throw (ex-info "invalid 2D truss mesh" {})))
+  {:mesh/kind :truss-2d :mesh/nodes (mapv vec nodes) :mesh/elements (vec elements)
+   :mesh/units {:length :m :area :m2}})
+
+(defn fixed-displacement-2d [node dof value]
+  (when-not (and (integer? node) (#{:x :y} dof) (number? value))
+    (throw (ex-info "invalid 2D displacement BC" {})))
+  {:bc/kind :displacement-2d :bc/node node :bc/dof dof :bc/value value})
+
+(defn nodal-force-2d [node [fx fy :as value]]
+  (when-not (and (integer? node) (= 2 (count value)) (every? number? value))
+    (throw (ex-info "invalid 2D nodal force" {})))
+  {:load/kind :force-2d :load/node node :load/value [fx fy]})
 
 (defn- zero-matrix [n] (vec (repeat n (vec (repeat n 0.0)))))
 (defn- add-at [m i j x] (update-in m [i j] + x))
@@ -105,6 +128,56 @@
   (and (= (:study/id study) (:result/study result))
        (= (:study/source-revision study) (:result/source-revision result))
        (= (:study/adapter study) (:result/adapter result))))
+
+(defn solve-linear-static-truss-2d [study]
+  (when-not (and (= :linear-static (:study/kind study)) (= :truss-2d (get-in study [:study/mesh :mesh/kind])))
+    (throw (ex-info "truss solver requires linear-static truss-2d" {})))
+  (let [mesh (:study/mesh study) nodes (:mesh/nodes mesh) dof-count (* 2 (count nodes))
+        youngs (get-in study [:study/material :material/youngs-modulus])
+        k (reduce (fn [matrix {:element/keys [a b area]}]
+                    (let [[ax ay] (nth nodes a) [bx by] (nth nodes b) dx (- bx ax) dy (- by ay)
+                          length (square-root (+ (* dx dx) (* dy dy))) c (/ dx length) s (/ dy length)
+                          factor (/ (* youngs area) length)
+                          local (mapv #(mapv (fn [v] (* factor v)) %)
+                                      [[(* c c) (* c s) (- (* c c)) (- (* c s))]
+                                       [(* c s) (* s s) (- (* c s)) (- (* s s))]
+                                       [(- (* c c)) (- (* c s)) (* c c) (* c s)]
+                                       [(- (* c s)) (- (* s s)) (* c s) (* s s)]])
+                          ids [(* 2 a) (inc (* 2 a)) (* 2 b) (inc (* 2 b))]]
+                      (reduce (fn [m [i j]] (add-at m (nth ids i) (nth ids j) (get-in local [i j])))
+                              matrix (for [i (range 4) j (range 4)] [i j]))))
+                  (zero-matrix dof-count) (:mesh/elements mesh))
+        forces (reduce (fn [v {:load/keys [node value]}]
+                         (-> v (update (* 2 node) + (first value)) (update (inc (* 2 node)) + (second value))))
+                       (vec (repeat dof-count 0.0)) (:study/loads study))
+        dof-index (fn [{:bc/keys [node dof]}] (+ (* 2 node) (if (= dof :x) 0 1)))
+        prescribed (into {} (map (fn [bc] [(dof-index bc) (:bc/value bc)]) (:study/boundary-conditions study)))
+        free (vec (remove prescribed (range dof-count)))
+        reduced-k (mapv (fn [i] (mapv #(get-in k [i %]) free)) free)
+        reduced-f (mapv (fn [i] (- (nth forces i)
+                                   (reduce + (map (fn [[j u]] (* (get-in k [i j]) u)) prescribed)))) free)
+        free-u (solve-dense reduced-k reduced-f 1.0e-12)
+        displacement (reduce (fn [v [i u]] (assoc v i u))
+                             (reduce (fn [v [i u]] (assoc v i u)) (vec (repeat dof-count 0.0)) prescribed)
+                             (map vector free free-u))
+        internal (mapv (fn [row] (reduce + (map * row displacement))) k)
+        reactions (into {} (map (fn [i] [i (- (nth internal i) (nth forces i))]) (keys prescribed)))
+        element-results (mapv (fn [{:element/keys [a b area]}]
+                                (let [[ax ay] (nth nodes a) [bx by] (nth nodes b) dx (- bx ax) dy (- by ay)
+                                      length (square-root (+ (* dx dx) (* dy dy))) c (/ dx length) s (/ dy length)
+                                      ua [(nth displacement (* 2 a)) (nth displacement (inc (* 2 a)))]
+                                      ub [(nth displacement (* 2 b)) (nth displacement (inc (* 2 b)))]
+                                      extension (+ (* c (- (first ub) (first ua))) (* s (- (second ub) (second ua))))
+                                      strain (/ extension length) stress (* youngs strain)]
+                                  {:element/strain strain :element/stress stress :element/axial-force (* stress area)}))
+                              (:mesh/elements mesh))]
+    {:result/study (:study/id study) :result/source-revision (:study/source-revision study)
+     :result/adapter (:study/adapter study) :result/qualification :verified
+     :result/displacement-2d (mapv vec (partition 2 displacement)) :result/reactions reactions
+     :result/elements element-results
+     :result/balance {:applied [(reduce + (take-nth 2 forces)) (reduce + (take-nth 2 (rest forces)))]
+                      :reaction [(reduce + (map #(get reactions % 0) (range 0 dof-count 2)))
+                                 (reduce + (map #(get reactions % 0) (range 1 dof-count 2)))]}}))
 
 (defn analytic-bar-displacement [force length youngs-modulus area]
   (/ (* force length) (* youngs-modulus area)))

@@ -41,7 +41,10 @@ Detail views, hidden-line removal, full GD&T validation and PDF remain subsequen
 materials, boundary conditions, loads, adapter provenance and stale-result
 detection. Its transparent 1D linear-static bar FEM reference is verified
 against the analytic solution, reaction/energy balance and mesh refinement. It
-is a verification oracle, not a safety-certified production solver.
+also includes a 2D truss global-stiffness solver with mixed constraints,
+vector loads, element stress/strain and reaction balance, cross-checked against
+the bar analytic solution. These are verification oracles, not safety-certified
+production solvers.
 
 `kami.modeling.feature-graph` generalizes the linear modifier stack into a typed
 dependency DAG with cycle/type diagnostics, deterministic cache keys, partial
@@ -68,4 +71,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 55 tests / 478 assertions).
+Run `clojure -M:test` (currently 56 tests / 483 assertions).
