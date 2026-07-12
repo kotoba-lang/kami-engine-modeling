@@ -37,6 +37,11 @@ detection. Its transparent 1D linear-static bar FEM reference is verified
 against the analytic solution, reaction/energy balance and mesh refinement. It
 is a verification oracle, not a safety-certified production solver.
 
+`kami.modeling.feature-graph` generalizes the linear modifier stack into a typed
+dependency DAG with cycle/type diagnostics, deterministic cache keys, partial
+invalidation, disabled nodes, structured evaluation failures and last-valid
+preview retention. The existing UI stack remains a compatible projection.
+
 `kami.modeling.document` is the first shared CAD foundation: a versioned
 immutable document graph with stable UUID nodes, explicit units and modeling
 tolerance, deterministic revision IDs, projection provenance/staleness checks,
@@ -44,4 +49,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 40 tests / 209 assertions).
+Run `clojure -M:test` (currently 43 tests / 223 assertions).
