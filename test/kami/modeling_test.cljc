@@ -32,6 +32,17 @@
     (is (m/valid-mesh? beveled))
     (is (thrown? #?(:clj Exception :cljs js/Error) (m/bevel-face base 1 1.0 0.2)))))
 
+(deftest loop-cut-splits-quads-and-preserves-uvs
+  (let [base (m/planar-unwrap (m/quad 4 2) :z)
+        cut (m/loop-cut-face base 0 0.25)]
+    (is (= 6 (count (:mesh/vertices cut))))
+    (is (= 2 (count (:mesh/faces cut))))
+    (is (= [-1.0 -1.0 0.0] (nth (:mesh/vertices cut) 4)))
+    (is (= [0.25 0.0] (nth (:mesh/uvs cut) 4)))
+    (is (= [[0 4 5 3] [4 1 2 5]] (:mesh/faces cut)))
+    (is (m/valid-mesh? cut))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/loop-cut-face (m/mesh [[0 0 0] [1 0 0] [0 1 0]] [[0 1 2]]) 0 0.5)))))
+
 (deftest vertex-edge-editing-and-picking
   (let [base (m/cube 2) vertex (m/translate-vertex base 6 [0 0 1])
         edge (m/translate-edge base [5 6] [1 0 0])]

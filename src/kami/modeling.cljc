@@ -113,6 +113,31 @@
         inset (inset-face m face-index (- 1 width))]
     (translate-face inset face-index (mapv #(* depth %) normal))))
 
+(defn- interpolate [a b t]
+  (mapv (fn [x y] (+ x (* t (- y x)))) a b))
+
+(defn loop-cut-face
+  "Split a quad into two quads by inserting a cut between opposite edges.
+  `factor` is measured from vertices 0/3 toward 1/2. Per-vertex UVs are
+  interpolated when present, keeping the mesh immediately exportable."
+  [{:mesh/keys [vertices faces uvs] :as m} face-index factor]
+  (when-not (and (number? factor) (< 0 factor 1))
+    (throw (ex-info "loop cut factor must be between 0 and 1" {:factor factor})))
+  (let [face (get faces face-index)]
+    (when-not (= 4 (count face))
+      (throw (ex-info "loop cut requires a quad" {:face-index face-index :vertex-count (count face)})))
+    (let [[a b c d] face
+          ab (count vertices) dc (inc ab)
+          next-vertices (conj vertices (interpolate (nth vertices a) (nth vertices b) factor)
+                                      (interpolate (nth vertices d) (nth vertices c) factor))
+          next-faces (into (assoc faces face-index [a ab dc d]) [[ab b c dc]])
+          result (mesh next-vertices next-faces)]
+      (if uvs
+        (assoc result :mesh/uvs
+               (conj uvs (interpolate (nth uvs a) (nth uvs b) factor)
+                         (interpolate (nth uvs d) (nth uvs c) factor)))
+        result))))
+
 (defn delete-face [m face-index]
   (update m :mesh/faces #(vec (concat (subvec % 0 face-index) (subvec % (inc face-index))))))
 
