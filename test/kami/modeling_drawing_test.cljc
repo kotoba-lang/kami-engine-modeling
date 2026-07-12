@@ -14,19 +14,29 @@
                             (drawing/box-view-geometry {:min [0 0 0] :max [40 20 10]} :front)
                             {:origin [20 20] :scale 2})
         dim (drawing/dimension (uid "dim/width") (:view/id front) :horizontal [node-id node-id]
-                               (document/length 40 :mm 0.01) {:tolerance {:plus 0.1 :minus 0.1}})
+                               (document/length 40 :mm 0.01)
+                               {:tolerance {:plus 0.1 :minus 0.1}
+                                :source-path [:document/nodes node-id :parameter/value]})
         sheet (-> (drawing/sheet (uid "sheet") (:document/revision doc)
                                  {:paper :A4 :projection :first-angle :units :mm :title "Bracket"})
                   (drawing/add-view front) (drawing/add-dimension dim))
         svg (drawing/export-svg sheet)
         changed (document/transact doc "did:plc:test" {:command :parameter/set}
-                                   #(assoc-in % [:document/nodes node-id :parameter/value] 45))]
+                                   #(assoc-in % [:document/nodes node-id :parameter/value] 45))
+        regenerated (drawing/regenerate sheet changed)
+        next-sheet (:regeneration/sheet regenerated)]
     (is (drawing/current? sheet doc))
     (is (= :stale (:status (drawing/regeneration-status sheet changed))))
     (is (empty? (:orphaned (drawing/regeneration-status sheet changed))))
     (is (string/includes? svg "width=\"297mm\""))
     (is (string/includes? svg "40 mm"))
-    (is (= 4 (count (re-seq #"<line " svg))))))
+    (is (= 4 (count (re-seq #"<line " svg))))
+    (is (= :regenerated (:regeneration/status regenerated)))
+    (is (= 45 (get-in next-sheet [:drawing/dimensions 0 :dimension/value :quantity/value])))
+    (is (= (:document/revision changed) (:drawing/model-revision next-sheet)))
+    (is (= (:drawing/views sheet) (:drawing/views next-sheet)))
+    (is (= (:drawing/annotations sheet) (:drawing/annotations next-sheet)))
+    (is (string/includes? (drawing/export-svg next-sheet) "45 mm"))))
 
 (deftest orphan-detection-and-bom
   (let [part-id (uid "part") occ-a (uid "a") occ-b (uid "b")

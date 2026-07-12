@@ -46,13 +46,14 @@
 
 (defn add-view [sheet view] (update sheet :drawing/views conj view))
 
-(defn dimension [id view-id kind references value {:keys [tolerance prefix suffix]
+(defn dimension [id view-id kind references value {:keys [tolerance prefix suffix source-path]
                                                     :or {prefix "" suffix ""}}]
   (when-not (and (uuid? id) (uuid? view-id) (#{:linear :horizontal :vertical :diameter :radius :angle} kind)
                  (= 2 (count references)) (= :length (:quantity/kind value)))
     (throw (ex-info "invalid associative dimension" {:id id :kind kind})))
   {:dimension/id id :dimension/view view-id :dimension/kind kind :dimension/references references
-   :dimension/value value :dimension/tolerance tolerance :dimension/prefix prefix :dimension/suffix suffix})
+   :dimension/value value :dimension/tolerance tolerance :dimension/prefix prefix :dimension/suffix suffix
+   :dimension/source-path source-path})
 
 (defn add-dimension [sheet dimension]
   (when-not (some #(= (:dimension/view dimension) (:view/id %)) (:drawing/views sheet))
@@ -111,6 +112,39 @@
             refs (mapcat :dimension/references (:drawing/dimensions sheet))
             orphaned (vec (remove node-ids refs))]
         {:status :stale :orphaned orphaned})))
+
+(defn regenerate
+  "Regenerate associative parameter-driven dimensions against a new document
+  revision. Unrelated views and annotations retain their stable identities.
+  Dimensions with missing topology or source values remain unchanged and are
+  reported instead of silently rebinding."
+  [sheet document]
+  (when-not (document/valid-document? document)
+    (throw (ex-info "cannot regenerate from invalid document" {})))
+  (let [node-ids (set (keys (:document/nodes document)))
+        result (reduce
+                (fn [{:keys [dimensions diagnostics]} dimension]
+                  (let [missing (vec (remove node-ids (:dimension/references dimension)))
+                        path (:dimension/source-path dimension)
+                        source (when path (get-in document path ::missing))]
+                    (cond
+                      (seq missing)
+                      {:dimensions (conj dimensions dimension)
+                       :diagnostics (conj diagnostics {:error :orphaned-dimension
+                                                       :dimension (:dimension/id dimension) :references missing})}
+                      (nil? path) {:dimensions (conj dimensions dimension) :diagnostics diagnostics}
+                      (not (number? source))
+                      {:dimensions (conj dimensions dimension)
+                       :diagnostics (conj diagnostics {:error :missing-dimension-source
+                                                       :dimension (:dimension/id dimension) :path path})}
+                      :else
+                      {:dimensions (conj dimensions (assoc-in dimension [:dimension/value :quantity/value] source))
+                       :diagnostics diagnostics})))
+                {:dimensions [] :diagnostics []} (:drawing/dimensions sheet))
+        regenerated (assoc sheet :drawing/model-revision (:document/revision document)
+                                 :drawing/dimensions (:dimensions result))]
+    {:regeneration/sheet regenerated :regeneration/diagnostics (:diagnostics result)
+     :regeneration/status (if (seq (:diagnostics result)) :partial :regenerated)}))
 
 (defn- xml-escape [x]
   (-> (str x) (string/replace "&" "&amp;") (string/replace "<" "&lt;")

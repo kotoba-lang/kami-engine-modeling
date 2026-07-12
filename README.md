@@ -54,6 +54,9 @@ Section views, hatch metadata, center/datum/surface/feature-control annotations
 and deterministic ASCII DXF now share the same semantic linework as SVG.
 Detail views, visible/hidden edge classification, validated GD&T feature-control
 frames and deterministic vector PDF 1.4 now share that source as well. General
+Parameter-bound dimensions regenerate from a new immutable document revision;
+missing topology/source paths produce explicit partial diagnostics while
+unrelated views and annotations retain stable identity. General
 curved-body hidden-line removal and external standards-conformance corpora remain
 subsequent gates.
 
@@ -115,4 +118,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 78 tests / 605 assertions).
+Run `clojure -M:test` (currently 78 tests / 611 assertions).
