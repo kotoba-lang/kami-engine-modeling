@@ -32,7 +32,9 @@ unsolved constraints until their production solvers land.
 `kami.modeling.drawing` adds model-revision-associated sheets, orthographic box
 views, semantic dimensions, stale/orphan diagnostics, assembly BOM generation,
 ISO/ASME-oriented paper/projection settings and deterministic vector SVG output.
-Section/detail views, hidden-line removal, GD&T and DXF/PDF remain subsequent gates.
+Section views, hatch metadata, center/datum/surface/feature-control annotations
+and deterministic ASCII DXF now share the same semantic linework as SVG.
+Detail views, hidden-line removal, full GD&T validation and PDF remain subsequent gates.
 
 `kami.modeling.cae` adds solver-neutral, revision-bound studies with SI units,
 materials, boundary conditions, loads, adapter provenance and stale-result
@@ -65,4 +67,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 52 tests / 461 assertions).
+Run `clojure -M:test` (currently 53 tests / 468 assertions).

@@ -43,3 +43,24 @@
     (is (= [missing missing] (:orphaned (drawing/regeneration-status sheet doc))))
     (is (= 2 (get-in sheet [:drawing/bom 0 :bom/quantity])))
     (is (string/includes? (drawing/export-svg sheet) "2 × Bracket (r7)"))))
+
+(deftest section-semantic-annotations-and-dxf-share-linework
+  (let [base-view (drawing/view (uid "base") :front
+                                (drawing/box-view-geometry {:min [0 0 0] :max [20 10 8]} :front) {})
+        section (drawing/section-view (uid "section") (:view/id base-view) [[10 0] [10 8]]
+                                      (drawing/box-view-geometry {:min [0 0 0] :max [20 10 8]} :front)
+                                      {:direction :front :origin [40 20] :scale 1})
+        datum (drawing/annotation (uid "datum") (:view/id section) :datum [45 25] {:text "A"})
+        fcf (drawing/annotation (uid "fcf") (:view/id section) :feature-control-frame [50 25]
+                                {:text "⌖ 0.1 | A"})
+        sheet (-> (drawing/sheet (uid "exchange") "model-r1" {:paper :A3 :units :mm})
+                  (drawing/add-view base-view) (drawing/add-view section)
+                  (drawing/add-annotation datum) (drawing/add-annotation fcf))
+        svg (drawing/export-svg sheet) dxf (drawing/export-dxf sheet)]
+    (is (= :section (:view/kind section)))
+    (is (= :ansi31 (get-in section [:view/hatch :pattern])))
+    (is (= 8 (count (re-seq #"<line " svg))))
+    (is (= 8 (count (re-seq #"0\nLINE\n" dxf))))
+    (is (string/includes? dxf "$INSUNITS\n70\n4"))
+    (is (string/includes? svg "feature-control-frame"))
+    (is (string/includes? dxf "⌖ 0.1 | A"))))

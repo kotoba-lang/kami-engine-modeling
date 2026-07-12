@@ -6,6 +6,7 @@
 (def paper-sizes {:A4 [297 210] :A3 [420 297] :ANSI-A [279.4 215.9] :ANSI-B [431.8 279.4]})
 (def projection-methods #{:first-angle :third-angle})
 (def view-directions #{:front :back :left :right :top :bottom})
+(def annotation-kinds #{:center-mark :datum :surface-finish :feature-control-frame :weld :balloon})
 
 (defn sheet [id model-revision {:keys [paper projection units title]
                                 :or {paper :A4 projection :first-angle units :mm title "Drawing"}}]
@@ -14,7 +15,7 @@
     (throw (ex-info "invalid drawing sheet" {:id id :paper paper :projection projection})))
   {:drawing/id id :drawing/model-revision model-revision :drawing/paper paper
    :drawing/projection projection :drawing/units units :drawing/title title
-   :drawing/views [] :drawing/dimensions [] :drawing/bom []})
+   :drawing/views [] :drawing/dimensions [] :drawing/annotations [] :drawing/bom []})
 
 (defn view [id direction geometry {:keys [origin scale hidden-lines?]
                                    :or {origin [20 20] scale 1 hidden-lines? true}}]
@@ -47,6 +48,26 @@
   (when-not (some #(= (:dimension/view dimension) (:view/id %)) (:drawing/views sheet))
     (throw (ex-info "dimension references missing view" {:view (:dimension/view dimension)})))
   (update sheet :drawing/dimensions conj dimension))
+
+(defn section-view [id source-view-id cutting-line geometry options]
+  (when-not (and (uuid? source-view-id) (= 2 (count cutting-line))
+                 (every? #(and (= 2 (count %)) (every? number? %)) cutting-line))
+    (throw (ex-info "invalid section cutting line" {:source-view source-view-id})))
+  (assoc (view id (:direction options :front) geometry options)
+         :view/kind :section :view/source source-view-id :view/cutting-line cutting-line
+         :view/hatch (:hatch options {:pattern :ansi31 :angle 45 :spacing 2.5})))
+
+(defn annotation [id view-id kind anchor data]
+  (when-not (and (uuid? id) (uuid? view-id) (annotation-kinds kind)
+                 (= 2 (count anchor)) (every? number? anchor) (map? data))
+    (throw (ex-info "invalid drawing annotation" {:id id :kind kind})))
+  {:annotation/id id :annotation/view view-id :annotation/kind kind
+   :annotation/anchor (vec anchor) :annotation/data data})
+
+(defn add-annotation [sheet annotation]
+  (when-not (some #(= (:annotation/view annotation) (:view/id %)) (:drawing/views sheet))
+    (throw (ex-info "annotation references missing view" {:view (:annotation/view annotation)})))
+  (update sheet :drawing/annotations conj annotation))
 
 (defn bill-of-materials [occurrences parts]
   (->> occurrences vals (remove :occurrence/suppressed?)
@@ -86,6 +107,12 @@
                    (str "<text data-dimension=\"" id "\" x=\"10\" y=\"" (+ 12 (* i 5)) "\">"
                         (xml-escape (str prefix (:quantity/value value) " " (name (:quantity/unit value)) suffix)) "</text>"))
                  (:drawing/dimensions sheet))
+        annotation-svg (map-indexed
+                        (fn [i {:annotation/keys [id kind anchor data]}]
+                          (str "<text data-annotation=\"" id "\" data-kind=\"" (name kind)
+                               "\" x=\"" (first anchor) "\" y=\"" (second anchor) "\">"
+                               (xml-escape (or (:text data) (name kind))) "</text>"))
+                        (:drawing/annotations sheet))
         bom-svg (map-indexed (fn [i row]
                                (str "<text data-bom-row=\"" i "\" x=\"" (- width 80) "\" y=\"" (+ 15 (* i 5)) "\">"
                                     (xml-escape (str (:bom/quantity row) " × " (:bom/description row)
@@ -95,4 +122,28 @@
          "mm\" viewBox=\"0 0 " width " " height "\"><title>" (xml-escape (:drawing/title sheet))
          "</title><g fill=\"none\" stroke=\"black\" stroke-width=\"0.25\">"
          (string/join view-svg) "</g><g font-family=\"sans-serif\" font-size=\"3.5\">"
-         (string/join dim-svg) (string/join bom-svg) "</g></svg>")))
+         (string/join dim-svg) (string/join annotation-svg) (string/join bom-svg) "</g></svg>")))
+
+(defn export-dxf
+  "ASCII DXF R12 line/text subset generated from the same semantic views and
+  annotations as SVG. Units are declared through $INSUNITS."
+  [sheet]
+  (let [unit-code ({:in 1 :ft 2 :mm 4 :cm 5 :m 6} (:drawing/units sheet))
+        lines (for [{:view/keys [geometry origin scale]} (:drawing/views sheet)
+                    [a b] (:edges geometry)
+                    :let [[ax ay] (nth (:points geometry) a) [bx by] (nth (:points geometry) b)
+                          tx #(+ (first origin) (* scale %)) ty #(+ (second origin) (* scale %))]]
+                (str "0\nLINE\n8\nVISIBLE\n10\n" (fmt (tx ax)) "\n20\n" (fmt (ty ay))
+                     "\n30\n0.0\n11\n" (fmt (tx bx)) "\n21\n" (fmt (ty by)) "\n31\n0.0\n"))
+        texts (concat
+               (map (fn [{:dimension/keys [value prefix suffix]}]
+                      (str prefix (:quantity/value value) " " (name (:quantity/unit value)) suffix))
+                    (:drawing/dimensions sheet))
+               (map #(or (get-in % [:annotation/data :text]) (name (:annotation/kind %)))
+                    (:drawing/annotations sheet)))
+        text-entities (map-indexed (fn [i text]
+                                     (str "0\nTEXT\n8\nANNOTATION\n10\n10\n20\n" (+ 10 (* i 5))
+                                          "\n30\n0\n40\n3.5\n1\n" text "\n")) texts)]
+    (str "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n" unit-code "\n0\nENDSEC\n"
+         "0\nSECTION\n2\nENTITIES\n" (string/join lines) (string/join text-entities)
+         "0\nENDSEC\n0\nEOF\n")))
