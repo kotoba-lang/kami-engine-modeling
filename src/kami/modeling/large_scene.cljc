@@ -110,3 +110,44 @@
                                 :instance-count (count (:instances candidate))
                                 :lods (frequencies (map #(-> (select-lod (get geometries (:geometry/id candidate)) camera-position %)
                                                             :lod/level) (:instances candidate)))}) selected)}))))
+
+(defn procedural-grid-manifest
+  "Out-of-core occurrence manifest. Stores chunk descriptors, never a million
+  occurrence maps, while preserving deterministic IDs and exact counts."
+  [id geometry-id columns rows spacing chunk-columns chunk-rows triangles-per-instance]
+  (when-not (and (uuid? id) (uuid? geometry-id) (every? pos-int? [columns rows chunk-columns chunk-rows])
+                 (pos? spacing) (pos-int? triangles-per-instance))
+    (throw (ex-info "invalid procedural grid manifest" {})))
+  (let [chunks-x (long (#?(:clj Math/ceil :cljs js/Math.ceil) (/ columns chunk-columns)))
+        chunks-y (long (#?(:clj Math/ceil :cljs js/Math.ceil) (/ rows chunk-rows)))
+        descriptors (vec (for [cy (range chunks-y) cx (range chunks-x)
+                               :let [x0 (* cx chunk-columns) y0 (* cy chunk-rows)
+                                     width (min chunk-columns (- columns x0))
+                                     height (min chunk-rows (- rows y0))]]
+                           {:chunk/id [cx cy] :chunk/origin [x0 y0] :chunk/size [width height]
+                            :chunk/occurrences (* width height)}))]
+    {:manifest/id id :manifest/geometry geometry-id :manifest/columns columns :manifest/rows rows
+     :manifest/spacing spacing :manifest/chunk-size [chunk-columns chunk-rows]
+     :manifest/chunks descriptors :manifest/occurrences (* columns rows)
+     :manifest/triangles (* columns rows triangles-per-instance)
+     :manifest/triangles-per-instance triangles-per-instance}))
+
+(defn materialize-chunks [manifest chunk-ids]
+  (let [wanted (set chunk-ids) geometry-id (:manifest/geometry manifest) spacing (:manifest/spacing manifest)]
+    (vec (mapcat (fn [{:chunk/keys [id origin size]}]
+                   (when (wanted id)
+                     (let [[x0 y0] origin [width height] size]
+                       (for [dy (range height) dx (range width)
+                             :let [x (+ x0 dx) y (+ y0 dy)]]
+                         (instance (document/stable-uuid (:manifest/id manifest) (str x "/" y))
+                                   geometry-id [(* spacing x) 0 (* spacing y)])))))
+                 (:manifest/chunks manifest)))))
+
+(defn manifest-metrics [manifest resident-chunk-ids]
+  (let [resident (filter (comp (set resident-chunk-ids) :chunk/id) (:manifest/chunks manifest))
+        occurrences (reduce + (map :chunk/occurrences resident))]
+    {:scene/total-occurrences (:manifest/occurrences manifest)
+     :scene/total-triangles (:manifest/triangles manifest)
+     :scene/resident-occurrences occurrences
+     :scene/resident-triangles (* occurrences (:manifest/triangles-per-instance manifest))
+     :scene/resident-chunks (count resident)}))

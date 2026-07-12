@@ -52,3 +52,18 @@
     (is (= (:instance/picking-id a) (:instance/picking-id (large/instance (uid "pick") (:geometry/id cube-geometry) [5 0 0]))))
     (is (empty? (:stream/selected plan)))
     (is (= 1 (count (:stream/deferred plan))))))
+
+(deftest million-occurrence-hundred-million-triangle-out-of-core-manifest
+  (let [manifest (large/procedural-grid-manifest (uid "million-grid") (:geometry/id cube-geometry)
+                                                  1000 1000 2 100 100 600)
+        resident-ids (mapv :chunk/id (take 2 (:manifest/chunks manifest)))
+        resident (large/materialize-chunks manifest resident-ids)
+        metrics (large/manifest-metrics manifest resident-ids)]
+    (is (= 1000000 (:manifest/occurrences manifest)))
+    (is (= 600000000 (:manifest/triangles manifest)))
+    (is (= 100 (count (:manifest/chunks manifest))))
+    (is (= 20000 (count resident)))
+    (is (= 12000000 (:scene/resident-triangles metrics)))
+    (is (= (:instance/id (first resident))
+           (:instance/id (first (large/materialize-chunks manifest resident-ids))))
+        "materialized chunk identities are deterministic")))

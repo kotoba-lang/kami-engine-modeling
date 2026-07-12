@@ -62,8 +62,11 @@ is still a separate release gate.
 `kami.modeling.large-scene` separates shared geometry from instances and adds
 AABB BVH construction, frustum culling, distance LOD, spatial chunks,
 resident-byte-budget streaming plans and portable stable picking IDs. The data
-gate covers 10,000 instances collapsed to one shared upload and instanced draw;
-browser/device p95 and 100-million-triangle streaming gates remain outstanding.
+gate covers 10,000 instances collapsed to one shared upload and instanced draw.
+An out-of-core procedural manifest gate represents 1,000,000 occurrences and
+600,000,000 triangles as 100 deterministic chunks, materializing only a
+20,000-occurrence / 12,000,000-triangle resident window with stable IDs.
+Named-device p95 frame-time and bounded-memory browser gates remain outstanding.
 
 `kami.modeling.collaboration` adds actor/logical-time/parent/precondition
 operations, deterministic replay, offline branches, semantic-path merge,
@@ -81,4 +84,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 63 tests / 523 assertions).
+Run `clojure -M:test` (currently 64 tests / 529 assertions).
