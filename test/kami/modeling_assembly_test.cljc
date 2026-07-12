@@ -84,3 +84,34 @@
     (is (= [7.0 0.0 0.0] (get-in result [:kinematic/poses (:occurrence/id rack) :translation])))
     (is (= :conflict (:kinematic/status result)))
     (is (= 2 (count (:kinematic/conflicts result))))))
+
+(deftest nested-assemblies-flatten-with-stable-paths-and-cycle-diagnostics
+  (let [leaf-occurrence (assembly/occurrence (uid "nested/leaf") (:part/id block)
+                                              {:transform (assoc assembly/identity-transform :translation [1 0 0])})
+        leaf (assembly/assembly (uid "nested/leaf-assembly") [block] [leaf-occurrence] [] {:default {}})
+        root (assembly/assembly (uid "nested/root") [] [] [] {:default {}})
+        child (assembly/assembly-instance (uid "nested/child") (:assembly/id leaf) [10 2 3] :default false)
+        model (assembly/nested-model (:assembly/id root) {(:assembly/id root) root (:assembly/id leaf) leaf}
+                                     {(:assembly/id root) [child]})
+        flattened (assembly/flatten-nested model)
+        cyclic (assoc-in model [:nested/children (:assembly/id leaf)]
+                         [(assembly/assembly-instance (uid "nested/back") (:assembly/id root) [0 0 0] :default false)])]
+    (is (= 1 (count flattened)))
+    (is (= [11 2 3] (get-in flattened [0 :occurrence/transform :translation])))
+    (is (= [(:assembly-instance/id child) (:occurrence/id leaf-occurrence)]
+           (:occurrence/path (first flattened))))
+    (is (= (:occurrence/path (first flattened)) (:occurrence/path (first (assembly/flatten-nested model)))))
+    (is (some #(= :nested-assembly-cycle (:error %)) (assembly/nested-errors cyclic)))))
+
+(deftest assembly-mass-properties-and-thousand-part-gate
+  (let [occurrences (mapv (fn [i] (assembly/occurrence (uid (str "mass/" i)) (:part/id block)
+                                                        {:transform (assoc assembly/identity-transform :translation [(* i 3) 0 0])}))
+                          (range 1000))
+        model (assembly/assembly (uid "mass/assembly") [block] occurrences [] {:default {}})
+        props (assembly/assembly-mass-properties model {(:part/id block) 2.0})]
+    (is (= 1000 (count (:assembly/occurrences model))))
+    (is (= 16000.0 (:assembly/mass props)))
+    (is (= [1498.5 0.0 0.0] (:assembly/center-of-mass props)))
+    (is (= [(/ 32.0 3.0) (/ 32.0 3.0) (/ 32.0 3.0)]
+           (get-in props [:assembly/parts 0 :mass/inertia-diagonal])))
+    (is (empty? (assembly/interference model 1.0e-9)))))

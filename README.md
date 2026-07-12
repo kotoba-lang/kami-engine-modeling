@@ -31,6 +31,10 @@ mate solving, DOF and over-constraint diagnostics, and AABB interference
 depth/volume. Its kinematic layer adds revolute/prismatic joints, limits,
 gear/rack-pinion coupling, cycle diagnostics and deterministic forward poses.
 General nonlinear closed-loop 6-DOF solving remains a subsequent gate.
+Nested subassembly instances now flatten to stable UUID paths with accumulated
+transforms and cycle diagnostics. Bounding-volume mass, center-of-mass and
+diagonal inertia are available per part/assembly; the data gate covers 1,000
+part occurrences with clearance checking.
 
 `kami.modeling.drawing` adds model-revision-associated sheets, orthographic box
 views, semantic dimensions, stale/orphan diagnostics, assembly BOM generation,
@@ -96,4 +100,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 68 tests / 554 assertions).
+Run `clojure -M:test` (currently 70 tests / 564 assertions).

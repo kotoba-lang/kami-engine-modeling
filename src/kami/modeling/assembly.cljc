@@ -238,3 +238,78 @@
           all-conflicts (into conflicts limit-conflicts)]
       {:kinematic/status (if (seq all-conflicts) :conflict :solved)
        :kinematic/coordinates coordinates :kinematic/poses poses :kinematic/conflicts all-conflicts})))
+
+(defn assembly-instance [id assembly-id translation configuration suppressed?]
+  (when-not (and (uuid? id) (uuid? assembly-id) (vec3? translation) (keyword? configuration) (boolean? suppressed?))
+    (throw (ex-info "invalid nested assembly instance" {:id id :assembly assembly-id})))
+  {:assembly-instance/id id :assembly-instance/assembly assembly-id
+   :assembly-instance/translation translation :assembly-instance/configuration configuration
+   :assembly-instance/suppressed? suppressed?})
+
+(defn nested-model [root-assembly-id assemblies children]
+  (when-not (and (uuid? root-assembly-id) (every? uuid? (keys assemblies))
+                 (contains? assemblies root-assembly-id))
+    (throw (ex-info "invalid nested assembly model" {:root root-assembly-id})))
+  {:nested/root root-assembly-id :nested/assemblies assemblies
+   :nested/children (into {} (map (fn [[id xs]] [id (vec xs)]) children))})
+
+(defn nested-errors [model]
+  (let [assemblies (:nested/assemblies model) children (:nested/children model)
+        errors (transient []) add! #(conj! errors %)]
+    (doseq [[parent instances] children instance instances]
+      (when-not (contains? assemblies parent) (add! {:error :missing-parent-assembly :assembly parent}))
+      (when-not (contains? assemblies (:assembly-instance/assembly instance))
+        (add! {:error :missing-child-assembly :instance (:assembly-instance/id instance)
+               :assembly (:assembly-instance/assembly instance)})))
+    (letfn [(visit [assembly-id path]
+              (if (some #{assembly-id} path)
+                [{:error :nested-assembly-cycle :path (conj path assembly-id)}]
+                (mapcat #(visit (:assembly-instance/assembly %) (conj path assembly-id))
+                        (remove :assembly-instance/suppressed? (get children assembly-id)))))]
+      (doseq [e (visit (:nested/root model) [])] (add! e)))
+    (persistent! errors)))
+
+(defn flatten-nested
+  "Resolve nested subassemblies to leaf part occurrences. Stable path IDs are
+  vectors of assembly-instance UUIDs followed by the leaf occurrence UUID."
+  [model]
+  (let [errors (nested-errors model)]
+    (when (seq errors) (throw (ex-info "invalid nested assembly model" {:errors errors})))
+    (letfn [(walk [assembly-id translation path]
+              (let [assembly (get-in model [:nested/assemblies assembly-id])
+                    leaves (for [[id occurrence] (:assembly/occurrences assembly)
+                                 :when (not (:occurrence/suppressed? occurrence))]
+                             (-> occurrence
+                                 (assoc :occurrence/path (conj path id))
+                                 (update-in [:occurrence/transform :translation] #(v+ translation %))))
+                    nested (mapcat (fn [instance]
+                                     (walk (:assembly-instance/assembly instance)
+                                           (v+ translation (:assembly-instance/translation instance))
+                                           (conj path (:assembly-instance/id instance))))
+                                   (remove :assembly-instance/suppressed? (get-in model [:nested/children assembly-id])))]
+                (concat leaves nested)))]
+      (vec (walk (:nested/root model) [0 0 0] [])))))
+
+(defn part-mass-properties [part density]
+  (when-not (and (number? density) (pos? density)) (throw (ex-info "density must be positive" {})))
+  (let [bounds (:part/bounds part) dimensions (mapv - (:max bounds) (:min bounds))
+        volume (reduce * dimensions) mass (* density volume)
+        center (mapv #(/ (+ %1 %2) 2.0) (:min bounds) (:max bounds))
+        [x y z] dimensions
+        inertia [(/ (* mass (+ (* y y) (* z z))) 12.0)
+                 (/ (* mass (+ (* x x) (* z z))) 12.0)
+                 (/ (* mass (+ (* x x) (* y y))) 12.0)]]
+    {:mass/value mass :mass/volume volume :mass/center center :mass/inertia-diagonal inertia}))
+
+(defn assembly-mass-properties [assembly density-by-part]
+  (let [active (remove :occurrence/suppressed? (vals (:assembly/occurrences assembly)))
+        entries (mapv (fn [occurrence]
+                        (let [part (get-in assembly [:assembly/parts (:occurrence/part occurrence)])
+                              props (part-mass-properties part (get density-by-part (:part/id part)))
+                              world-center (v+ (:mass/center props) (get-in occurrence [:occurrence/transform :translation]))]
+                          (assoc props :mass/world-center world-center :occurrence/id (:occurrence/id occurrence)))) active)
+        mass (reduce + (map :mass/value entries))
+        center (if (zero? mass) [0 0 0]
+                 (mapv #(/ % mass) (reduce #(mapv + %1 %2) [0 0 0]
+                                           (map (fn [entry] (v* (:mass/world-center entry) (:mass/value entry))) entries))))]
+    {:assembly/mass mass :assembly/center-of-mass center :assembly/parts entries}))
