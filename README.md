@@ -53,6 +53,9 @@ adds 3 DOF/node, isotropic elasticity, six-component stress, von Mises and 3D
 reaction balance; its affine patch test matches the theoretical uniaxial stress
 and Poisson contraction. These are verification oracles, not safety-certified
 production solvers.
+The same study/provenance contract now supports steady 1D thermal conduction
+with temperature constraints, nodal heat, conductivity, heat flux and reaction
+balance, verified against the analytic linear temperature field.
 
 `kami.modeling.feature-graph` generalizes the linear modifier stack into a typed
 dependency DAG with cycle/type diagnostics, deterministic cache keys, partial
@@ -90,4 +93,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 66 tests / 543 assertions).
+Run `clojure -M:test` (currently 67 tests / 549 assertions).

@@ -74,3 +74,19 @@
                                                   (get-in result [:result/balance :reaction]))))
     (is (= (/ 1.0 6.0) (get-in result [:result/elements 0 :element/volume])))
     (is (= :verified (:result/qualification result)))))
+
+(deftest steady-thermal-bar-matches-analytic-temperature-and-heat-balance
+  (let [thermal-steel (cae/isotropic-material (uid "thermal-steel")
+                                               {:name "Thermal steel" :youngs-modulus 200.0e9
+                                                :poisson-ratio 0.3 :thermal-conductivity 50})
+        mesh (cae/bar-mesh 2.0 0.01 8)
+        study (cae/study (uid "thermal") "model-r1" :steady-thermal mesh thermal-steel
+                         [(cae/fixed-temperature 0 300)] [(cae/nodal-heat 8 100)] adapter)
+        result (cae/solve-steady-thermal-bar study)
+        expected (cae/analytic-bar-temperature 300 100 2 50 0.01 2)]
+    (is (< (Math/abs (- expected (last (:result/temperature result)))) 1.0e-9))
+    (is (< (Math/abs (get-in result [:result/balance :residual])) 1.0e-9))
+    (is (< (Math/abs (+ 100 (get-in result [:result/heat-reactions 0]))) 1.0e-9))
+    (is (every? #(< (Math/abs (+ 10000 %)) 1.0e-9) (:result/heat-flux result)))
+    (is (= :verified (:result/qualification result)))
+    (is (cae/result-current? study result))))

@@ -45,6 +45,14 @@
   (when-not (and (integer? node) (number? value)) (throw (ex-info "invalid nodal force" {})))
   {:load/kind :force :load/node node :load/value value})
 
+(defn fixed-temperature [node value]
+  (when-not (and (integer? node) (number? value)) (throw (ex-info "invalid temperature BC" {})))
+  {:bc/kind :temperature :bc/node node :bc/value value})
+
+(defn nodal-heat [node value]
+  (when-not (and (integer? node) (number? value)) (throw (ex-info "invalid nodal heat load" {})))
+  {:load/kind :heat :load/node node :load/value value})
+
 (defn truss-mesh-2d [nodes elements]
   (when-not (and (<= 2 (count nodes))
                  (every? #(and (= 2 (count %)) (every? number? %)) nodes)
@@ -181,6 +189,46 @@
 
 (defn analytic-bar-displacement [force length youngs-modulus area]
   (/ (* force length) (* youngs-modulus area)))
+
+(defn solve-steady-thermal-bar [study]
+  (when-not (and (= :steady-thermal (:study/kind study)) (= :bar-1d (get-in study [:study/mesh :mesh/kind])))
+    (throw (ex-info "thermal reference solver supports steady-thermal bar-1d only" {})))
+  (let [mesh (:study/mesh study) n (count (:mesh/nodes mesh)) area (:mesh/area mesh)
+        conductivity (get-in study [:study/material :material/thermal-conductivity])]
+    (when-not (and (number? conductivity) (pos? conductivity))
+      (throw (ex-info "thermal study requires positive conductivity" {})))
+    (let [k (reduce (fn [matrix [a b]]
+                      (let [length (- (nth (:mesh/nodes mesh) b) (nth (:mesh/nodes mesh) a))
+                            conductance (/ (* conductivity area) length)]
+                        (-> matrix (add-at a a conductance) (add-at a b (- conductance))
+                            (add-at b a (- conductance)) (add-at b b conductance))))
+                    (zero-matrix n) (:mesh/elements mesh))
+          heat (reduce (fn [v {:load/keys [node value]}] (update v node + value))
+                       (vec (repeat n 0.0)) (:study/loads study))
+          prescribed (into {} (map (juxt :bc/node :bc/value) (:study/boundary-conditions study)))
+          free (vec (remove prescribed (range n)))
+          reduced-k (mapv (fn [i] (mapv #(get-in k [i %]) free)) free)
+          reduced-q (mapv (fn [i] (- (nth heat i)
+                                     (reduce + (map (fn [[j t]] (* (get-in k [i j]) t)) prescribed)))) free)
+          free-temperature (if (seq free) (solve-dense reduced-k reduced-q 1.0e-12) [])
+          temperature (reduce (fn [v [i t]] (assoc v i t))
+                              (reduce (fn [v [i t]] (assoc v i t)) (vec (repeat n 0.0)) prescribed)
+                              (map vector free free-temperature))
+          internal (mapv (fn [row] (reduce + (map * row temperature))) k)
+          reactions (into {} (map (fn [i] [i (- (nth internal i) (nth heat i))]) (keys prescribed)))
+          residual (+ (reduce + heat) (reduce + (vals reactions)))
+          fluxes (mapv (fn [[a b]]
+                         (let [length (- (nth (:mesh/nodes mesh) b) (nth (:mesh/nodes mesh) a))]
+                           (* (- conductivity) (/ (- (nth temperature b) (nth temperature a)) length))))
+                       (:mesh/elements mesh))]
+      {:result/study (:study/id study) :result/source-revision (:study/source-revision study)
+       :result/adapter (:study/adapter study) :result/qualification :verified
+       :result/temperature temperature :result/heat-reactions reactions :result/heat-flux fluxes
+       :result/balance {:applied-heat (reduce + heat) :reaction-heat (reduce + (vals reactions))
+                        :residual residual}})))
+
+(defn analytic-bar-temperature [fixed-temperature heat length conductivity area x]
+  (+ fixed-temperature (/ (* heat x) (* conductivity area))))
 
 (defn convergence-report [solutions]
   (when (< (count solutions) 2) (throw (ex-info "convergence needs at least two solutions" {})))
