@@ -13,4 +13,11 @@ CAE support. Their shared document graph, adapter boundaries and 1/5–5/5 gates
 are defined in
 [`kami-engine` ADR-0049](../kami-engine/90-docs/adr/0049-kotoba-3d-suite-commercial-cad-maturity.md).
 
-Run `clojure -M:test` (currently 21 tests / 122 assertions).
+`kami.modeling.document` is the first shared CAD foundation: a versioned
+immutable document graph with stable UUID nodes, explicit units and modeling
+tolerance, deterministic revision IDs, projection provenance/staleness checks,
+and a non-destructive adapter from existing polygon scenes. Exact geometry,
+drawings, CAE and collaboration history build on this contract rather than
+using renderer meshes as their source of truth.
+
+Run `clojure -M:test` (currently 24 tests / 139 assertions).
