@@ -26,8 +26,9 @@ are defined in
 `kami.modeling.assembly` provides immutable part definitions and occurrences,
 configurations/suppression, grounded state, deterministic coincident/distance
 mate solving, DOF and over-constraint diagnostics, and AABB interference
-depth/volume. Rotational, gear and full kinematic solving remain explicit
-unsolved constraints until their production solvers land.
+depth/volume. Its kinematic layer adds revolute/prismatic joints, limits,
+gear/rack-pinion coupling, cycle diagnostics and deterministic forward poses.
+General nonlinear closed-loop 6-DOF solving remains a subsequent gate.
 
 `kami.modeling.drawing` adds model-revision-associated sheets, orthographic box
 views, semantic dimensions, stale/orphan diagnostics, assembly BOM generation,
@@ -67,4 +68,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 53 tests / 468 assertions).
+Run `clojure -M:test` (currently 55 tests / 478 assertions).

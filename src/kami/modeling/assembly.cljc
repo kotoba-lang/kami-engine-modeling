@@ -5,12 +5,14 @@
   (:require [kami.modeling.document :as document]))
 
 (def mate-kinds #{:coincident :distance :parallel :concentric :angle :gear :rack-pinion :limit})
+(def joint-kinds #{:fixed :revolute :prismatic})
 (defn- vec3? [v] (and (vector? v) (= 3 (count v)) (every? number? v)))
 (defn- v+ [a b] (mapv + a b))
 (defn- v- [a b] (mapv - a b))
 (defn- v* [v k] (mapv #(* % k) v))
 (defn- dot [a b] (reduce + (map * a b)))
 (defn- magnitude [v] (#?(:clj Math/sqrt :cljs js/Math.sqrt) (dot v v)))
+(defn- absolute [v] (#?(:clj Math/abs :cljs js/Math.abs) v))
 (defn- normalize [v]
   (let [m (magnitude v)] (when (zero? m) (throw (ex-info "zero direction" {}))) (v* v (/ 1.0 m))))
 
@@ -140,3 +142,99 @@
                                    (:min ba) (:max ba) (:min bb) (:max bb))]
                :when (every? #(> % tolerance) overlap)]
            {:occurrences [a b] :overlap overlap :volume (reduce * overlap)}))))
+
+(defn joint [id kind parent child axis origin coordinate limits]
+  (when-not (and (uuid? id) (joint-kinds kind) (uuid? parent) (uuid? child) (not= parent child)
+                 (vec3? axis) (vec3? origin) (number? coordinate)
+                 (or (nil? limits) (and (= 2 (count limits)) (every? number? limits) (apply <= limits))))
+    (throw (ex-info "invalid kinematic joint" {:id id :kind kind})))
+  {:joint/id id :joint/kind kind :joint/parent parent :joint/child child
+   :joint/axis (normalize axis) :joint/origin origin :joint/coordinate coordinate :joint/limits limits})
+
+(defn coupling [id kind driver driven ratio offset]
+  (when-not (and (uuid? id) (#{:gear :rack-pinion} kind) (uuid? driver) (uuid? driven)
+                 (number? ratio) (not (zero? ratio)) (number? offset))
+    (throw (ex-info "invalid kinematic coupling" {:id id :kind kind})))
+  {:coupling/id id :coupling/kind kind :coupling/driver driver :coupling/driven driven
+   :coupling/ratio ratio :coupling/offset offset})
+
+(defn kinematic-model [assembly joints couplings]
+  {:kinematic/assembly assembly :kinematic/joints (into {} (map (juxt :joint/id identity) joints))
+   :kinematic/couplings (into {} (map (juxt :coupling/id identity) couplings))})
+
+(defn kinematic-errors [model]
+  (let [occurrences (get-in model [:kinematic/assembly :assembly/occurrences])
+        joints (:kinematic/joints model) errors (transient []) add! #(conj! errors %)]
+    (doseq [[id j] joints]
+      (doseq [occurrence [(:joint/parent j) (:joint/child j)]]
+        (when-not (contains? occurrences occurrence)
+          (add! {:error :missing-joint-occurrence :joint id :occurrence occurrence})))
+      (when-let [[lower upper] (:joint/limits j)]
+        (when-not (<= lower (:joint/coordinate j) upper)
+          (add! {:error :joint-limit :joint id :coordinate (:joint/coordinate j) :limits [lower upper]}))))
+    (doseq [[id c] (:kinematic/couplings model)]
+      (doseq [joint-id [(:coupling/driver c) (:coupling/driven c)]]
+        (when-not (contains? joints joint-id)
+          (add! {:error :missing-coupling-joint :coupling id :joint joint-id}))))
+    ;; One parent joint per child keeps the forward graph a tree/forest.
+    (doseq [[child linked] (group-by :joint/child (vals joints)) :when (> (count linked) 1)]
+      (add! {:error :multiple-joint-parents :occurrence child :joints (mapv :joint/id linked)}))
+    (letfn [(walk [occurrence visiting visited]
+              (cond (visiting occurrence) [visited [{:error :kinematic-cycle :occurrence occurrence}]]
+                    (visited occurrence) [visited []]
+                    :else (reduce (fn [[seen es] j]
+                                    (let [[seen' found] (walk (:joint/child j) (conj visiting occurrence) seen)]
+                                      [seen' (into es found)]))
+                                  [(conj visited occurrence) []]
+                                  (filter #(= occurrence (:joint/parent %)) (vals joints)))))]
+      (let [[_ found] (reduce (fn [[visited es] occurrence]
+                                (let [[visited' found] (walk occurrence #{} visited)] [visited' (into es found)]))
+                              [#{} []] (keys occurrences))]
+        (doseq [e (distinct found)] (add! e))))
+    (persistent! errors)))
+
+(defn set-joint-coordinate [model joint-id coordinate]
+  (when-not (number? coordinate) (throw (ex-info "joint coordinate must be numeric" {})))
+  (assoc-in model [:kinematic/joints joint-id :joint/coordinate] coordinate))
+
+(defn- apply-couplings [model tolerance]
+  (reduce (fn [{:keys [coordinates conflicts] :as state} c]
+            (let [driver (get coordinates (:coupling/driver c))
+                  expected (+ (* driver (:coupling/ratio c)) (:coupling/offset c))
+                  current (get coordinates (:coupling/driven c))]
+              (if (and (number? current) (> (absolute (- current expected)) tolerance))
+                (assoc state :coordinates (assoc coordinates (:coupling/driven c) expected)
+                             :conflicts (conj conflicts {:error :coupling-overridden
+                                                        :coupling (:coupling/id c) :previous current :solved expected}))
+                (assoc state :coordinates (assoc coordinates (:coupling/driven c) expected)))))
+          {:coordinates (into {} (map (juxt :joint/id :joint/coordinate) (vals (:kinematic/joints model))))
+           :conflicts []} (sort-by (comp str :coupling/id) (vals (:kinematic/couplings model)))))
+
+(defn solve-kinematics [model tolerance]
+  (let [structural-errors (remove #(= :joint-limit (:error %)) (kinematic-errors model))]
+    (when (seq structural-errors) (throw (ex-info "invalid kinematic model" {:errors structural-errors})))
+    (let [{:keys [coordinates conflicts]} (apply-couplings model tolerance)
+          joints (into {} (map (fn [[id j]] [id (assoc j :joint/coordinate (get coordinates id))])
+                               (:kinematic/joints model)))
+          limit-conflicts (vec (keep (fn [[id j]]
+                                       (when-let [[lower upper] (:joint/limits j)]
+                                         (when-not (<= lower (:joint/coordinate j) upper)
+                                           {:error :joint-limit :joint id :coordinate (:joint/coordinate j)
+                                            :limits [lower upper]}))) joints))
+          occurrences (get-in model [:kinematic/assembly :assembly/occurrences])
+          child-joints (group-by :joint/child (vals joints))
+          pose (memoize
+                (fn pose [occurrence-id]
+                  (if-let [j (first (get child-joints occurrence-id))]
+                    (let [parent-pose (pose (:joint/parent j)) q (:joint/coordinate j)
+                          delta (case (:joint/kind j) :prismatic (v* (:joint/axis j) q) [0 0 0])
+                          rotation (case (:joint/kind j) :revolute (v* (:joint/axis j) q) [0 0 0])]
+                      {:translation (v+ (:translation parent-pose) (v+ (:joint/origin j) delta))
+                       :rotation (v+ (:rotation parent-pose) rotation)})
+                    (let [o (get occurrences occurrence-id)]
+                      {:translation (get-in o [:occurrence/transform :translation])
+                       :rotation (get-in o [:occurrence/transform :rotation])}))))
+          poses (into {} (map (fn [id] [id (pose id)]) (keys occurrences)))
+          all-conflicts (into conflicts limit-conflicts)]
+      {:kinematic/status (if (seq all-conflicts) :conflict :solved)
+       :kinematic/coordinates coordinates :kinematic/poses poses :kinematic/conflicts all-conflicts})))
