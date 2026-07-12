@@ -98,6 +98,9 @@ the reduced CSR system with device-resident PCG. Its CPU-oracle gate uses 64
 elements and matches the transparent Gaussian reference displacement, reaction
 balance and study adapter provenance; the same path dispatches cuSPARSE/cuBLAS
 when a qualified CUDA backend is injected.
+The pinned `num` revision in turn pins `kotoba-lang/compiler`: CUDA and WGSL
+elementwise/reduction kernels now carry shared typed accelerator-KIR identity,
+target-specific code hashes and bounded resource metadata in backend provenance.
 
 `kami.modeling.feature-graph` generalizes the linear modifier stack into a typed
 dependency DAG with cycle/type diagnostics, deterministic cache keys, partial
