@@ -205,7 +205,7 @@
         welded (m/apply-modifier duplicate (m/modifier :weld {:tolerance 0.001}))
         solid (m/apply-modifier quad (m/modifier :solidify {:thickness 0.2}))
         unwrapped (m/apply-modifier quad (m/modifier :planar-unwrap {:axis :z}))]
-    (is (= 10 (count m/modifier-registry)))
+    (is (= 25 (count m/modifier-registry)))
     (is (= 2 (count (:mesh/faces evaluated))))
     (is (= [0.0 1.0 3.0] (first (:mesh/vertices evaluated))))
     (is (= 4 (count (:mesh/vertices welded))))
@@ -215,6 +215,34 @@
     (is (every? m/valid-mesh? [evaluated welded solid unwrapped]))
     (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"unknown modifier"
                           (m/apply-modifier quad (m/modifier :unknown {}))))))
+
+(deftest twenty-five-production-modifiers-remain-valid-and-deterministic
+  (let [cube (m/cube 2)
+        cases [[:rotate {:angles [0.1 0.2 0.3]}]
+               [:shear {:xy 0.2 :xz 0 :yx 0 :yz 0.1 :zx 0 :zy 0}]
+               [:taper {:axis :z :factor 0.1}]
+               [:twist {:axis :z :factor 0.25}]
+               [:bend {:axis :x :factor 0.1}]
+               [:spherize {:factor 0.5 :radius 2}]
+               [:decimate {:ratio 0.5}]
+               [:remove-degenerate {:epsilon 1.0e-9}]
+               [:orient-outward {}]
+               [:snap-grid {:size 0.25}]
+               [:axis-project {:axis :z :value 0}]
+               [:center-origin {}]
+               [:clamp {:min [-0.5 -0.5 -0.5] :max [0.5 0.5 0.5]}]
+               [:radial-wave {:amplitude 0.1 :frequency 2}]
+               [:deterministic-jitter {:amplitude 0.01 :seed 42}]]
+        results (mapv (fn [[kind options]] (m/apply-modifier cube (m/modifier kind options))) cases)
+        jitter-a (last results)
+        jitter-b (m/apply-modifier cube (m/modifier :deterministic-jitter {:amplitude 0.01 :seed 42}))]
+    (is (= 25 (count m/modifier-registry)))
+    (is (every? m/valid-mesh? results))
+    (is (= (:mesh/vertices jitter-a) (:mesh/vertices jitter-b)))
+    (is (= 3 (count (:mesh/faces (nth results 6)))))
+    (is (every? #(zero? (nth % 2)) (:mesh/vertices (nth results 10))))
+    (is (thrown? #?(:clj Exception :cljs js/Error)
+                 (m/apply-modifier cube (m/modifier :spherize {:factor 2 :radius 1}))))))
 
 (deftest portable-pbr-materials
   (let [base (m/scene [(m/object 1 "Cube" (m/cube 2))])

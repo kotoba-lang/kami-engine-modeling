@@ -51,10 +51,13 @@ production solvers.
 `kami.modeling.feature-graph` generalizes the linear modifier stack into a typed
 dependency DAG with cycle/type diagnostics, deterministic cache keys, partial
 invalidation, disabled nodes, structured evaluation failures and last-valid
-preview retention. The production registry currently evaluates 10 validated
-mesh modifiers: mirror, subdivision, array, translate, scale, triangulate,
-flip-normals, weld, solidify and planar-unwrap. The existing UI stack remains a
-compatible projection.
+preview retention. The production registry now evaluates the ADR gate of 25
+validated mesh modifiers: mirror, subdivision, array, translate, scale,
+triangulate, flip-normals, weld, solidify, planar-unwrap, rotate, shear, taper,
+twist, bend, spherize, decimate, remove-degenerate, orient-outward, snap-grid,
+axis-project, center-origin, clamp, radial-wave and deterministic-jitter. The
+existing UI stack remains a compatible projection; full public UI/E2E coverage
+is still a separate release gate.
 
 `kami.modeling.large-scene` separates shared geometry from instances and adds
 AABB BVH construction, frustum culling, distance LOD, spatial chunks,
@@ -78,4 +81,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 62 tests / 517 assertions).
+Run `clojure -M:test` (currently 63 tests / 523 assertions).

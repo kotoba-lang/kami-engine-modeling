@@ -522,7 +522,22 @@
    :flip-normals {:input :mesh :output :mesh}
    :weld {:input :mesh :output :mesh}
    :solidify {:input :mesh :output :mesh}
-   :planar-unwrap {:input :mesh :output :mesh}})
+   :planar-unwrap {:input :mesh :output :mesh}
+   :rotate {:input :mesh :output :mesh}
+   :shear {:input :mesh :output :mesh}
+   :taper {:input :mesh :output :mesh}
+   :twist {:input :mesh :output :mesh}
+   :bend {:input :mesh :output :mesh}
+   :spherize {:input :mesh :output :mesh}
+   :decimate {:input :mesh :output :mesh}
+   :remove-degenerate {:input :mesh :output :mesh}
+   :orient-outward {:input :mesh :output :mesh}
+   :snap-grid {:input :mesh :output :mesh}
+   :axis-project {:input :mesh :output :mesh}
+   :center-origin {:input :mesh :output :mesh}
+   :clamp {:input :mesh :output :mesh}
+   :radial-wave {:input :mesh :output :mesh}
+   :deterministic-jitter {:input :mesh :output :mesh}})
 
 (defn triangulate-mesh [m]
   (mesh (:mesh/vertices m)
@@ -573,6 +588,80 @@
         sides (mapv (fn [[a b]] [a b (+ n b) (+ n a)]) boundary)]
     (mesh (into outer inner) (into (into outer-faces inner-faces) sides))))
 
+(defn- map-mesh-vertices [m f]
+  (mesh (mapv f (:mesh/vertices m)) (:mesh/faces m) (:mesh/uvs m)))
+
+(defn rotate-mesh [m [rx ry rz]]
+  (map-mesh-vertices m #(transform-point % {:object/translation [0 0 0]
+                                             :object/rotation [rx ry rz] :object/scale [1 1 1]})))
+
+(defn shear-mesh [m {:keys [xy xz yx yz zx zy] :or {xy 0 xz 0 yx 0 yz 0 zx 0 zy 0}}]
+  (map-mesh-vertices m (fn [[x y z]] [(+ x (* xy y) (* xz z))
+                                       (+ y (* yx x) (* yz z))
+                                       (+ z (* zx x) (* zy y))])))
+
+(defn taper-mesh [m axis factor]
+  (let [axis-index ({:x 0 :y 1 :z 2} axis)
+        others (vec (remove #{axis-index} [0 1 2]))]
+    (map-mesh-vertices m
+                       (fn [p] (let [scale (+ 1 (* factor (nth p axis-index)))]
+                                 (reduce #(update %1 %2 * scale) p others))))))
+
+(defn twist-mesh [m axis angle-per-unit]
+  (let [axis-index ({:x 0 :y 1 :z 2} axis)
+        [a b] (vec (remove #{axis-index} [0 1 2]))]
+    (map-mesh-vertices m
+                       (fn [p] (let [angle (* angle-per-unit (nth p axis-index))
+                                     c (cos-value angle) s (sin-value angle) pa (nth p a) pb (nth p b)]
+                                 (-> p (assoc a (- (* pa c) (* pb s)))
+                                     (assoc b (+ (* pa s) (* pb c)))))))))
+
+(defn bend-mesh [m axis curvature]
+  (let [axis-index ({:x 0 :y 1 :z 2} axis) radial-index (mod (inc axis-index) 3)]
+    (if (zero? curvature) m
+      (map-mesh-vertices m
+                         (fn [p] (let [coordinate (nth p axis-index) radius (/ 1.0 curvature)
+                                       angle (* coordinate curvature) radial (nth p radial-index)
+                                       bent-axis (* (+ radius radial) (sin-value angle))
+                                       bent-radial (- (* (+ radius radial) (cos-value angle)) radius)]
+                                   (-> p (assoc axis-index bent-axis) (assoc radial-index bent-radial))))))))
+
+(defn spherize-mesh [m factor radius]
+  (map-mesh-vertices m
+                     (fn [p] (let [length (sqrt-value (dot p p)) target (if (zero? length) p (mapv #(* radius (/ % length)) p))]
+                               (mapv #(+ (* (- 1 factor) %1) (* factor %2)) p target)))))
+
+(defn decimate-mesh [m ratio]
+  (let [target (max 1 (long (#?(:clj Math/ceil :cljs js/Math.ceil) (* ratio (count (:mesh/faces m))))))]
+    (mesh (:mesh/vertices m) (subvec (:mesh/faces m) 0 (min target (count (:mesh/faces m)))) (:mesh/uvs m))))
+
+(defn remove-degenerate-faces [m epsilon]
+  (let [valid-face? (fn [face-id face]
+                      (and (= (count face) (count (distinct face)))
+                           (>= (count face) 3)
+                           (try (> (sqrt-value (dot (face-normal m face-id) (face-normal m face-id))) epsilon)
+                                (catch #?(:clj Exception :cljs :default) _ false))))]
+    (mesh (:mesh/vertices m) (vec (keep-indexed #(when (valid-face? %1 %2) %2) (:mesh/faces m))) (:mesh/uvs m))))
+
+(defn axis-project-mesh [m axis value]
+  (let [index ({:x 0 :y 1 :z 2} axis)] (map-mesh-vertices m #(assoc % index value))))
+
+(defn center-origin-mesh [m]
+  (let [count-v (count (:mesh/vertices m)) center (mapv #(/ % count-v) (reduce #(mapv + %1 %2) [0 0 0] (:mesh/vertices m)))]
+    (map-mesh-vertices m #(mapv - % center))))
+
+(defn clamp-mesh [m minimum maximum]
+  (map-mesh-vertices m #(mapv (fn [v lo hi] (max lo (min hi v))) % minimum maximum)))
+
+(defn radial-wave-mesh [m amplitude frequency]
+  (map-mesh-vertices m (fn [[x y z]] [x y (+ z (* amplitude (sin-value (* frequency (sqrt-value (+ (* x x) (* y y)))))))])))
+
+(defn deterministic-jitter-mesh [m amplitude seed]
+  (mesh (mapv (fn [i p]
+                (mapv (fn [axis v]
+                        (+ v (* amplitude (sin-value (+ (* 12.9898 (+ i seed)) (* 78.233 axis))))))
+                      (range 3) p)) (range) (:mesh/vertices m)) (:mesh/faces m) (:mesh/uvs m)))
+
 (defn validate-modifier [{:modifier/keys [kind options]}]
   (when-not (modifier-registry kind) (throw (ex-info "unknown modifier" {:kind kind})))
   (case kind
@@ -586,6 +675,23 @@
     :weld (when-not (pos? (:tolerance options 0)) (throw (ex-info "weld requires positive tolerance" options)))
     :solidify (when-not (number? (:thickness options)) (throw (ex-info "solidify requires thickness" options)))
     :planar-unwrap (when-not (#{:x :y :z} (:axis options)) (throw (ex-info "unwrap requires axis" options)))
+    :rotate (when-not (and (= 3 (count (:angles options))) (every? number? (:angles options))) (throw (ex-info "rotate requires angles vec3" options)))
+    :shear (when-not (every? number? (vals options)) (throw (ex-info "shear factors must be numeric" options)))
+    :taper (when-not (and (#{:x :y :z} (:axis options)) (number? (:factor options)))
+             (throw (ex-info "deform modifier requires axis and factor" options)))
+    :twist (when-not (and (#{:x :y :z} (:axis options)) (number? (:factor options)))
+             (throw (ex-info "deform modifier requires axis and factor" options)))
+    :bend (when-not (and (#{:x :y :z} (:axis options)) (number? (:factor options)))
+            (throw (ex-info "deform modifier requires axis and factor" options)))
+    :spherize (when-not (and (<= 0 (:factor options) 1) (pos? (:radius options))) (throw (ex-info "invalid spherize options" options)))
+    :decimate (when-not (< 0 (:ratio options) 1) (throw (ex-info "decimate ratio must be between 0 and 1" options)))
+    :remove-degenerate (when-not (and (number? (:epsilon options 1.0e-9)) (not (neg? (:epsilon options 1.0e-9)))) (throw (ex-info "invalid epsilon" options)))
+    :snap-grid (when-not (pos? (:size options 0)) (throw (ex-info "grid size must be positive" options)))
+    :axis-project (when-not (and (#{:x :y :z} (:axis options)) (number? (:value options))) (throw (ex-info "invalid axis projection" options)))
+    :clamp (when-not (and (= 3 (count (:min options))) (= 3 (count (:max options)))
+                          (every? true? (map <= (:min options) (:max options)))) (throw (ex-info "invalid clamp bounds" options)))
+    :radial-wave (when-not (every? number? [(:amplitude options) (:frequency options)]) (throw (ex-info "invalid radial wave" options)))
+    :deterministic-jitter (when-not (and (number? (:amplitude options)) (number? (:seed options 0))) (throw (ex-info "invalid jitter" options)))
     nil)
   true)
 
@@ -603,7 +709,22 @@
       :flip-normals (flip-faces m (range (count (:mesh/faces m))))
       :weld (weld-mesh m (:tolerance options))
       :solidify (solidify-mesh m (:thickness options))
-      :planar-unwrap (planar-unwrap m (:axis options))))))
+      :planar-unwrap (planar-unwrap m (:axis options))
+      :rotate (rotate-mesh m (:angles options))
+      :shear (shear-mesh m options)
+      :taper (taper-mesh m (:axis options) (:factor options))
+      :twist (twist-mesh m (:axis options) (:factor options))
+      :bend (bend-mesh m (:axis options) (:factor options))
+      :spherize (spherize-mesh m (:factor options) (:radius options))
+      :decimate (decimate-mesh m (:ratio options))
+      :remove-degenerate (remove-degenerate-faces m (:epsilon options 1.0e-9))
+      :orient-outward (orient-outward m)
+      :snap-grid (snap-vertices m (range (count (:mesh/vertices m))) (:size options))
+      :axis-project (axis-project-mesh m (:axis options) (:value options))
+      :center-origin (center-origin-mesh m)
+      :clamp (clamp-mesh m (:min options) (:max options))
+      :radial-wave (radial-wave-mesh m (:amplitude options) (:frequency options))
+      :deterministic-jitter (deterministic-jitter-mesh m (:amplitude options) (:seed options 0))))))
 (defn evaluated-object-mesh [o] (reduce apply-modifier (:object/mesh o) (:object/modifiers o)))
 
 (defn scene-mesh
