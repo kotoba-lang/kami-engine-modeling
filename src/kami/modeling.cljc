@@ -100,6 +100,23 @@
     (transform-faces m face-indices
                      #(mapv + center (mapv (fn [x c] (* factor (- x c))) % center)))))
 
+(defn snap-value [value increment]
+  (when-not (and (number? increment) (pos? increment))
+    (throw (ex-info "snap increment must be positive" {:increment increment})))
+  (* increment (#?(:clj Math/round :cljs js/Math.round) (/ value increment))))
+
+(defn snap-vertices
+  "Snap a vertex selection to a 3D grid without changing topology or UVs."
+  [m vertex-indices increment]
+  (let [vertex-count (count (:mesh/vertices m)) indices (set vertex-indices)]
+    (when (empty? indices) (throw (ex-info "at least one vertex must be selected" {})))
+    (when-not (every? #(< -1 % vertex-count) indices)
+      (throw (ex-info "snap vertex index out of bounds" {:indices indices :vertex-count vertex-count})))
+    (update m :mesh/vertices
+            #(mapv (fn [index point]
+                     (if (indices index) (mapv (fn [value] (snap-value value increment)) point) point))
+                   (range) %))))
+
 (defn inset-face
   "Inset a polygon toward its center. Replaces the selected polygon with an
   inner cap at the same face index and adds one ring quad per edge."

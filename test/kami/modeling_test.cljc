@@ -91,6 +91,16 @@
     (is (m/valid-mesh? moved))
     (is (thrown? #?(:clj Exception :cljs js/Error) (m/translate-faces base [] [1 0 0])))))
 
+(deftest selected-vertices-snap-to-configurable-grid
+  (let [base (m/mesh [[0.14 -0.16 0.49] [1.0 1.0 1.0] [0 1 0]] [[0 1 2]])
+        snapped (m/snap-vertices base [0] 0.1)]
+    (is (= [0.1 -0.2 0.5] (first (:mesh/vertices snapped))))
+    (is (= [1.0 1.0 1.0] (second (:mesh/vertices snapped))))
+    (is (= 0.6 (m/snap-value 0.5 0.3)))
+    (is (m/valid-mesh? snapped))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/snap-vertices base [3] 0.1)))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/snap-vertices base [0] 0)))))
+
 (deftest multi-object-scene-editing
   (let [cube-a (m/object 1 "Cube" (m/cube 2))
         base (m/add-object (m/scene) cube-a)
