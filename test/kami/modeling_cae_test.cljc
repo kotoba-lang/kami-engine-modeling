@@ -90,3 +90,18 @@
     (is (every? #(< (Math/abs (+ 10000 %)) 1.0e-9) (:result/heat-flux result)))
     (is (= :verified (:result/qualification result)))
     (is (cae/result-current? study result))))
+
+(deftest modal-bar-first-frequency-converges-to-analytic-solution
+  (let [expected (cae/analytic-fixed-free-bar-frequency 2.0 200.0e9 7850)
+        results (mapv (fn [elements]
+                        (let [study (cae/study (uid (str "modal/" elements)) "model-r1" :modal
+                                               (cae/bar-mesh 2.0 0.01 elements) steel
+                                               [(cae/fixed-displacement 0 0)] [] adapter)]
+                          (cae/solve-modal-bar study 40))) [2 4 8 16])
+        frequencies (mapv #(get-in % [:result/modes 0 :mode/frequency-hz]) results)
+        errors (mapv #(Math/abs (- % expected)) frequencies)]
+    (is (every? true? (map > errors (rest errors))))
+    (is (< (/ (last errors) expected) 0.001))
+    (is (= 17 (count (get-in (last results) [:result/modes 0 :mode/shape]))))
+    (is (zero? (get-in (last results) [:result/modes 0 :mode/shape 0])))
+    (is (= :verified (:result/qualification (last results))))))

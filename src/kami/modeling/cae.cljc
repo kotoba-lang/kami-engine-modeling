@@ -3,7 +3,7 @@
   static reference solver. Results carry complete provenance and qualification."
   (:require [kami.modeling.document :as document]))
 
-(def analysis-kinds #{:linear-static :steady-thermal})
+(def analysis-kinds #{:linear-static :steady-thermal :modal})
 (def qualification-levels #{:experimental :verified :qualified})
 (defn- absolute [x] (#?(:clj Math/abs :cljs js/Math.abs) x))
 (defn- square-root [x] (#?(:clj Math/sqrt :cljs js/Math.sqrt) x))
@@ -31,7 +31,7 @@
 (defn study [id source-revision kind mesh material boundary-conditions loads adapter]
   (when-not (and (uuid? id) (string? source-revision) (analysis-kinds kind)
                  (map? mesh) (uuid? (:material/id material))
-                 (seq boundary-conditions) (seq loads)
+                 (seq boundary-conditions) (or (= kind :modal) (seq loads))
                  (string? (:adapter/id adapter)) (string? (:adapter/version adapter)))
     (throw (ex-info "invalid CAE study" {:id id :kind kind})))
   {:study/id id :study/source-revision source-revision :study/kind kind
@@ -229,6 +229,46 @@
 
 (defn analytic-bar-temperature [fixed-temperature heat length conductivity area x]
   (+ fixed-temperature (/ (* heat x) (* conductivity area))))
+
+(defn solve-modal-bar [study iterations]
+  (when-not (and (= :modal (:study/kind study)) (= :bar-1d (get-in study [:study/mesh :mesh/kind]))
+                 (integer? iterations) (pos? iterations))
+    (throw (ex-info "modal solver requires modal bar-1d and positive iterations" {})))
+  (let [mesh (:study/mesh study) n (count (:mesh/nodes mesh)) area (:mesh/area mesh)
+        youngs (get-in study [:study/material :material/youngs-modulus])
+        density (get-in study [:study/material :material/density])]
+    (when-not (and (number? density) (pos? density)) (throw (ex-info "modal study requires density" {})))
+    (let [k (assemble-bar mesh youngs)
+          mass (reduce (fn [matrix [a b]]
+                         (let [length (- (nth (:mesh/nodes mesh) b) (nth (:mesh/nodes mesh) a))
+                               factor (/ (* density area length) 6.0)]
+                           (-> matrix (add-at a a (* 2 factor)) (add-at a b factor)
+                               (add-at b a factor) (add-at b b (* 2 factor)))))
+                       (zero-matrix n) (:mesh/elements mesh))
+          fixed (set (map :bc/node (:study/boundary-conditions study)))
+          free (vec (remove fixed (range n)))
+          kr (mapv (fn [i] (mapv #(get-in k [i %]) free)) free)
+          mr (mapv (fn [i] (mapv #(get-in mass [i %]) free)) free)
+          mat-vec (fn [matrix vector] (mapv #(reduce + (map * % vector)) matrix))
+          mass-norm (fn [vector] (square-root (reduce + (map * vector (mat-vec mr vector)))))
+          initial (vec (repeat (count free) 1.0))
+          normalized (mapv #(/ % (mass-norm initial)) initial)
+          mode (loop [x normalized i 0]
+                 (if (= i iterations) x
+                   (let [rhs (mat-vec mr x) y (solve-dense kr rhs 1.0e-14) norm (mass-norm y)]
+                     (recur (mapv #(/ % norm) y) (inc i)))))
+          kx (mat-vec kr mode) mx (mat-vec mr mode)
+          eigenvalue (/ (reduce + (map * mode kx)) (reduce + (map * mode mx)))
+          omega (square-root eigenvalue) frequency (/ omega (* 2 #?(:clj Math/PI :cljs js/Math.PI)))
+          full-mode (reduce (fn [v [node value]] (assoc v node value)) (vec (repeat n 0.0)) (map vector free mode))]
+      {:result/study (:study/id study) :result/source-revision (:study/source-revision study)
+       :result/adapter (:study/adapter study) :result/qualification :verified
+       :result/modes [{:mode/index 1 :mode/eigenvalue eigenvalue :mode/angular-frequency omega
+                       :mode/frequency-hz frequency :mode/shape full-mode}]
+       :result/iterations iterations})))
+
+(defn analytic-fixed-free-bar-frequency [length youngs density]
+  (/ (square-root (/ youngs density)) (* 4 length)))
 
 (defn convergence-report [solutions]
   (when (< (count solutions) 2) (throw (ex-info "convergence needs at least two solutions" {})))

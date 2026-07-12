@@ -56,6 +56,9 @@ production solvers.
 The same study/provenance contract now supports steady 1D thermal conduction
 with temperature constraints, nodal heat, conductivity, heat flux and reaction
 balance, verified against the analytic linear temperature field.
+It also supports first-mode axial bar analysis using consistent mass and a
+generalized eigen solve; 2/4/8/16-element refinement converges monotonically to
+the fixed-free analytic frequency, reaching below 0.1% relative error.
 
 `kami.modeling.feature-graph` generalizes the linear modifier stack into a typed
 dependency DAG with cycle/type diagnostics, deterministic cache keys, partial
@@ -93,4 +96,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 67 tests / 549 assertions).
+Run `clojure -M:test` (currently 68 tests / 554 assertions).
