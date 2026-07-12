@@ -53,3 +53,24 @@
     (is (every? true? (map == [10000 0.0] (get-in result [:result/balance :applied]))))
     (is (every? true? (map == [-10000.0 0.0] (get-in result [:result/balance :reaction]))))
     (is (= :verified (:result/qualification result)))))
+
+(deftest three-dimensional-tetrahedron-affine-patch-test
+  (let [nodes [[0 0 0] [1 0 0] [0 1 0] [0 0 1]]
+        mesh (cae/tetra-mesh-3d nodes [{:element/nodes [0 1 2 3]}])
+        alpha 1.0e-4 nu 0.3
+        prescribed (vec (mapcat (fn [[node [x y z]]]
+                                  [(cae/fixed-displacement-3d node :x (* alpha x))
+                                   (cae/fixed-displacement-3d node :y (* (- nu) alpha y))
+                                   (cae/fixed-displacement-3d node :z (* (- nu) alpha z))])
+                                (map-indexed vector nodes)))
+        study (cae/study (uid "tetra-patch") "model-r1" :linear-static mesh steel prescribed
+                         [(cae/nodal-force-3d 0 [0 0 0])] adapter)
+        result (cae/solve-linear-static-tetra-3d study)
+        stress (get-in result [:result/elements 0 :element/stress])]
+    (is (< (Math/abs (- (* 200.0e9 alpha) (first stress))) 1.0))
+    (is (every? #(< (Math/abs %) 1.0) (subvec stress 1 6)))
+    (is (< (Math/abs (- (* 200.0e9 alpha) (get-in result [:result/elements 0 :element/von-mises]))) 1.0))
+    (is (every? #(< (Math/abs %) 1.0e-6) (map + (get-in result [:result/balance :applied])
+                                                  (get-in result [:result/balance :reaction]))))
+    (is (= (/ 1.0 6.0) (get-in result [:result/elements 0 :element/volume])))
+    (is (= :verified (:result/qualification result)))))

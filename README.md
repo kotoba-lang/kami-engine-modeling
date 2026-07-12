@@ -48,7 +48,10 @@ detection. Its transparent 1D linear-static bar FEM reference is verified
 against the analytic solution, reaction/energy balance and mesh refinement. It
 also includes a 2D truss global-stiffness solver with mixed constraints,
 vector loads, element stress/strain and reaction balance, cross-checked against
-the bar analytic solution. These are verification oracles, not safety-certified
+the bar analytic solution. A 4-node constant-strain tetrahedral 3D solid solver
+adds 3 DOF/node, isotropic elasticity, six-component stress, von Mises and 3D
+reaction balance; its affine patch test matches the theoretical uniaxial stress
+and Poisson contraction. These are verification oracles, not safety-certified
 production solvers.
 
 `kami.modeling.feature-graph` generalizes the linear modifier stack into a typed
@@ -87,4 +90,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 65 tests / 537 assertions).
+Run `clojure -M:test` (currently 66 tests / 543 assertions).

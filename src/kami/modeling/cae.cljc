@@ -192,3 +192,108 @@
      :convergence/max-difference (apply max differences) :convergence/tolerance tolerance
      :convergence/converged? (or (every? #(<= % tolerance) differences)
                                  (every? true? (map >= differences (rest differences))))}))
+
+(defn tetra-mesh-3d [nodes elements]
+  (when-not (and (<= 4 (count nodes))
+                 (every? #(and (= 3 (count %)) (every? number? %)) nodes)
+                 (seq elements)
+                 (every? (fn [element]
+                           (and (= 4 (count (:element/nodes element)))
+                                (= 4 (count (distinct (:element/nodes element))))
+                                (every? (fn [i] (< -1 i (count nodes))) (:element/nodes element))))
+                         elements))
+    (throw (ex-info "invalid tetrahedral mesh" {})))
+  {:mesh/kind :tetra-3d :mesh/nodes (mapv vec nodes) :mesh/elements (vec elements)
+   :mesh/units {:length :m}})
+
+(defn fixed-displacement-3d [node dof value]
+  (when-not (and (integer? node) (#{:x :y :z} dof) (number? value))
+    (throw (ex-info "invalid 3D displacement BC" {})))
+  {:bc/kind :displacement-3d :bc/node node :bc/dof dof :bc/value value})
+
+(defn nodal-force-3d [node value]
+  (when-not (and (integer? node) (= 3 (count value)) (every? number? value))
+    (throw (ex-info "invalid 3D nodal force" {})))
+  {:load/kind :force-3d :load/node node :load/value (vec value)})
+
+(defn- transpose [m] (apply mapv vector m))
+(defn- matrix-multiply [a b]
+  (let [bt (transpose b)] (mapv (fn [row] (mapv #(reduce + (map * row %)) bt)) a)))
+(defn- matrix-scale [m factor] (mapv #(mapv (fn [x] (* factor x)) %) m))
+
+(defn- tetra-data [nodes [n0 n1 n2 n3]]
+  (let [points (mapv nodes [n0 n1 n2 n3])
+        interpolation (mapv (fn [[x y z]] [1.0 x y z]) points)
+        coefficients (mapv (fn [i] (solve-dense interpolation
+                                                (mapv #(if (= i %) 1.0 0.0) (range 4)) 1.0e-14)) (range 4))
+        gradients (mapv #(subvec % 1 4) coefficients)
+        [p0 p1 p2 p3] points a (mapv - p1 p0) b (mapv - p2 p0) c (mapv - p3 p0)
+        determinant (reduce + (map * a [( - (* (b 1) (c 2)) (* (b 2) (c 1)))
+                                        (- (* (b 2) (c 0)) (* (b 0) (c 2)))
+                                        (- (* (b 0) (c 1)) (* (b 1) (c 0))) ]))
+        volume (/ (absolute determinant) 6.0)]
+    (when (< volume 1.0e-15) (throw (ex-info "degenerate tetrahedron" {:nodes [n0 n1 n2 n3]})))
+    {:gradients gradients :volume volume}))
+
+(defn- strain-matrix [gradients]
+  (reduce (fn [b [i [dx dy dz]]]
+            (let [column (* 3 i)]
+              (-> b
+                  (assoc-in [0 column] dx) (assoc-in [1 (inc column)] dy) (assoc-in [2 (+ column 2)] dz)
+                  (assoc-in [3 column] dy) (assoc-in [3 (inc column)] dx)
+                  (assoc-in [4 (inc column)] dz) (assoc-in [4 (+ column 2)] dy)
+                  (assoc-in [5 column] dz) (assoc-in [5 (+ column 2)] dx))))
+          (vec (repeat 6 (vec (repeat 12 0.0)))) (map-indexed vector gradients)))
+
+(defn- elasticity-3d [youngs poisson]
+  (let [lambda (/ (* youngs poisson) (* (+ 1 poisson) (- 1 (* 2 poisson))))
+        mu (/ youngs (* 2 (+ 1 poisson))) normal (+ lambda (* 2 mu))]
+    [[normal lambda lambda 0 0 0] [lambda normal lambda 0 0 0] [lambda lambda normal 0 0 0]
+     [0 0 0 mu 0 0] [0 0 0 0 mu 0] [0 0 0 0 0 mu]]))
+
+(defn solve-linear-static-tetra-3d [study]
+  (when-not (and (= :linear-static (:study/kind study)) (= :tetra-3d (get-in study [:study/mesh :mesh/kind])))
+    (throw (ex-info "tetra solver requires linear-static tetra-3d" {})))
+  (let [mesh (:study/mesh study) nodes (:mesh/nodes mesh) dof-count (* 3 (count nodes))
+        youngs (get-in study [:study/material :material/youngs-modulus])
+        poisson (get-in study [:study/material :material/poisson-ratio]) d (elasticity-3d youngs poisson)
+        element-data (mapv (fn [{:element/keys [nodes]}]
+                             (let [{:keys [gradients volume]} (tetra-data (:mesh/nodes mesh) nodes)
+                                   b (strain-matrix gradients) k (matrix-scale (matrix-multiply (transpose b) (matrix-multiply d b)) volume)]
+                               {:nodes nodes :b b :volume volume :k k})) (:mesh/elements mesh))
+        k (reduce (fn [global {:keys [nodes k]}]
+                    (let [ids (mapv (fn [node] [(* 3 node) (inc (* 3 node)) (+ 2 (* 3 node))]) nodes)
+                          ids (vec (mapcat identity ids))]
+                      (reduce (fn [m [i j]] (add-at m (ids i) (ids j) (get-in k [i j]))) global
+                              (for [i (range 12) j (range 12)] [i j]))))
+                  (zero-matrix dof-count) element-data)
+        forces (reduce (fn [v {:load/keys [node value]}]
+                         (reduce (fn [v axis] (update v (+ (* 3 node) axis) + (nth value axis))) v (range 3)))
+                       (vec (repeat dof-count 0.0)) (:study/loads study))
+        axis-index {:x 0 :y 1 :z 2}
+        prescribed (into {} (map (fn [{:bc/keys [node dof value]}] [(+ (* 3 node) (axis-index dof)) value])
+                                 (:study/boundary-conditions study)))
+        free (vec (remove prescribed (range dof-count)))
+        reduced-k (mapv (fn [i] (mapv #(get-in k [i %]) free)) free)
+        reduced-f (mapv (fn [i] (- (nth forces i)
+                                   (reduce + (map (fn [[j u]] (* (get-in k [i j]) u)) prescribed)))) free)
+        free-u (if (seq free) (solve-dense reduced-k reduced-f 1.0e-12) [])
+        displacement (reduce (fn [v [i u]] (assoc v i u))
+                             (reduce (fn [v [i u]] (assoc v i u)) (vec (repeat dof-count 0.0)) prescribed)
+                             (map vector free free-u))
+        internal (mapv (fn [row] (reduce + (map * row displacement))) k)
+        reactions (into {} (map (fn [i] [i (- (nth internal i) (nth forces i))]) (keys prescribed)))
+        results (mapv (fn [{:keys [nodes b volume]}]
+                        (let [ids (vec (mapcat (fn [node] [(* 3 node) (inc (* 3 node)) (+ 2 (* 3 node))]) nodes))
+                              ue (mapv displacement ids) strain (mapv #(reduce + (map * % ue)) b)
+                              stress (mapv #(reduce + (map * % strain)) d)
+                              [sx sy sz txy tyz tzx] stress
+                              vm (square-root (* 0.5 (+ (* (- sx sy) (- sx sy)) (* (- sy sz) (- sy sz))
+                                                        (* (- sz sx) (- sz sx)) (* 6 (+ (* txy txy) (* tyz tyz) (* tzx tzx))))))]
+                          {:element/volume volume :element/strain strain :element/stress stress :element/von-mises vm})) element-data)
+        component-sum (fn [values axis] (reduce + (take-nth 3 (drop axis values))))]
+    {:result/study (:study/id study) :result/source-revision (:study/source-revision study)
+     :result/adapter (:study/adapter study) :result/qualification :verified
+     :result/displacement-3d (mapv vec (partition 3 displacement)) :result/reactions reactions :result/elements results
+     :result/balance {:applied (mapv #(component-sum forces %) (range 3))
+                      :reaction (mapv #(reduce + (map (fn [i] (get reactions i 0)) (range % dof-count 3))) (range 3))}}))
