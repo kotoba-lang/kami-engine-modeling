@@ -64,3 +64,25 @@
     (is (string/includes? dxf "$INSUNITS\n70\n4"))
     (is (string/includes? svg "feature-control-frame"))
     (is (string/includes? dxf "⌖ 0.1 | A"))))
+
+(deftest hidden-detail-gdt-and-vector-pdf
+  (let [geometry (drawing/classified-geometry [[0 0] [20 0] [20 10] [0 10] [5 5] [15 5]]
+                                               [[0 1] [1 2] [2 3] [3 0]] [[4 5]])
+        base (drawing/view (uid "hidden-base") :front geometry {:hidden-lines? true})
+        detail (drawing/detail-view (uid "detail-a") (:view/id base) [10 5] 4 geometry
+                                    {:direction :front :origin [50 20] :scale 2 :label "A"})
+        frame (drawing/feature-control-frame :position 0.1 ["A" "B"])
+        annotation (drawing/annotation (uid "position") (:view/id detail) :feature-control-frame [55 25]
+                                       {:text "POSITION 0.1 | A | B" :gdt frame})
+        sheet (-> (drawing/sheet (uid "pdf") "model-r1" {:paper :A4 :units :mm :title "Vector drawing"})
+                  (drawing/add-view base) (drawing/add-view detail) (drawing/add-annotation annotation))
+        svg (drawing/export-svg sheet) dxf (drawing/export-dxf sheet) pdf (drawing/export-pdf sheet)]
+    (is (= :detail (:view/kind detail)))
+    (is (= :position (:gdt/symbol frame)))
+    (is (= 2 (count (re-seq #"data-edge=\"hidden\"" svg))))
+    (is (= 2 (count (re-seq #"8\nHIDDEN\n" dxf))))
+    (is (string/starts-with? pdf "%PDF-1.4"))
+    (is (string/includes? pdf "xref\n0 6"))
+    (is (string/includes? pdf "POSITION 0.1 | A | B"))
+    (is (thrown? #?(:clj Exception :cljs js/Error)
+                 (drawing/feature-control-frame :unknown 0.1 ["A"])))))
