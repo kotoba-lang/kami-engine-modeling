@@ -80,6 +80,17 @@
     (is (= 2 (count (m/pick-element base [0 0 4] [0 0 -1] :edge))))
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (m/translate-edge base [0 6] [1 0 0])))))
 
+(deftest multi-vertex-and-edge-transforms-deduplicate-endpoints
+  (let [base (m/cube 2)
+        vertices (m/translate-vertices base [4 5 5] [0 0 1])
+        edges (m/translate-edges base [[4 5] [5 6]] [0 0 1])]
+    (is (= [-1.0 -1.0 2.0] (nth (:mesh/vertices vertices) 4)))
+    (is (= [1.0 -1.0 2.0] (nth (:mesh/vertices vertices) 5)))
+    (is (= [1.0 -1.0 2.0] (nth (:mesh/vertices edges) 5)))
+    (is (= [1.0 1.0 2.0] (nth (:mesh/vertices edges) 6)))
+    (is (m/valid-mesh? edges))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/translate-edges base [[0 6]] [1 0 0])))))
+
 (deftest multi-face-transforms-touch-shared-vertices-once
   (let [base (m/cube 2)
         moved (m/translate-faces base [1 3] [0 0 1])

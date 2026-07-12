@@ -63,6 +63,22 @@
     (when-not (valid-edges normalized) (throw (ex-info "edge not found" {:edge edge})))
     (reduce #(translate-vertex %1 %2 delta) m normalized)))
 
+(defn translate-vertices [m vertex-indices delta]
+  (let [ids (set vertex-indices) vertex-count (count (:mesh/vertices m))]
+    (when (empty? ids) (throw (ex-info "at least one vertex must be selected" {})))
+    (when-not (every? #(< -1 % vertex-count) ids)
+      (throw (ex-info "vertex index out of bounds" {:indices ids :vertex-count vertex-count})))
+    (update m :mesh/vertices
+            #(mapv (fn [index point] (if (ids index) (mapv + point delta) point)) (range) %))))
+
+(defn translate-edges
+  "Translate an edge selection while moving shared endpoints exactly once."
+  [m edges delta]
+  (let [valid (set (mesh-edges m)) normalized (set (map #(vec (sort %)) edges))]
+    (when (empty? normalized) (throw (ex-info "at least one edge must be selected" {})))
+    (when-not (every? valid normalized) (throw (ex-info "edge not found" {:edges normalized})))
+    (translate-vertices m (mapcat identity normalized) delta)))
+
 (defn transform-face [m face-index f]
   (let [ids (set (nth (:mesh/faces m) face-index))]
     (update m :mesh/vertices
