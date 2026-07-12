@@ -19,8 +19,9 @@ not yet claim a complete feature kernel or production assembly, manufacturing
 drawing or qualified CAE support. `kami.modeling.step` implements a fail-closed ISO
 10303-21 AP203/AP214/AP242-profile geometric subset for planar, line-edged closed B-rep topology;
 its deterministic internal gate round-trips 100 generated closed bodies. This
-is explicitly not an external interoperability corpus or full AP242
-conformance. The shared document graph, adapter
+is complemented by a real NIST FTC-11 geometry-only AP203 fixture covering
+periodic circles, one-edge loops, inner bounds, planes, cylinders, tori and a
+closed shell. It is still not full AP242 conformance. The shared document graph, adapter
 boundaries and 1/5–5/5 gates
 are defined in
 [`kami-engine` ADR-0049](../kami-engine/90-docs/adr/0049-kotoba-3d-suite-commercial-cad-maturity.md).
@@ -104,4 +105,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 73 tests / 582 assertions).
+Run `clojure -M:test` (currently 74 tests / 592 assertions).

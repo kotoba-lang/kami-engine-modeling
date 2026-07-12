@@ -61,6 +61,27 @@
                  (re-seq #"(?m)^#([0-9]+)=(.+);$" text))))
 (defn- refs [s] (mapv (comp parse-long second) (re-seq #"#([0-9]+)" s)))
 (defn- bool-value [s] (if (string/includes? s ".F.") :reversed :forward))
+(def ^:private metadata-entities
+  #{"APPLICATION_CONTEXT" "APPLICATION_PROTOCOL_DEFINITION" "PRODUCT_CONTEXT" "PRODUCT"
+    "PRODUCT_RELATED_PRODUCT_CATEGORY" "PRODUCT_DEFINITION_FORMATION" "PRODUCT_DEFINITION_CONTEXT"
+    "PRODUCT_DEFINITION" "SHAPE_REPRESENTATION" "PRODUCT_DEFINITION_SHAPE"
+    "SHAPE_DEFINITION_REPRESENTATION" "DIRECTION" "AXIS2_PLACEMENT_3D"
+    "DIMENSIONAL_EXPONENTS" "PLANE_ANGLE_MEASURE_WITH_UNIT" "UNCERTAINTY_MEASURE_WITH_UNIT"
+    "ADVANCED_BREP_SHAPE_REPRESENTATION" "SHAPE_REPRESENTATION_RELATIONSHIP"
+    "COLOUR_RGB" "FILL_AREA_STYLE" "FILL_AREA_STYLE_COLOUR" "PRESENTATION_STYLE_ASSIGNMENT"
+    "MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION" "STYLED_ITEM" "SURFACE_SIDE_STYLE"
+    "SURFACE_STYLE_FILL_AREA" "SURFACE_STYLE_USAGE"})
+(def ^:private geometry-entities
+  #{"CARTESIAN_POINT" "VERTEX_POINT" "CIRCLE" "EDGE_CURVE" "ORIENTED_EDGE" "EDGE_LOOP"
+    "FACE_OUTER_BOUND" "FACE_BOUND" "ADVANCED_FACE" "PLANE" "CYLINDRICAL_SURFACE"
+    "TOROIDAL_SURFACE" "CLOSED_SHELL" "MANIFOLD_SOLID_BREP"})
+
+(defn inspect-file [text]
+  (let [entities (entity-lines text) kind (fn [expr] (second (re-find #"^([A-Z0-9_]+)\(" expr)))
+        kinds (frequencies (keep (comp kind val) entities))
+        profile (first (keep (fn [[p schema-name]] (when (string/includes? text schema-name) p)) schemas))]
+    {:step/profile profile :step/entity-count (count entities) :step/entities kinds
+     :step/unsupported (vec (sort (remove (into metadata-entities geometry-entities) (keys kinds))))}))
 
 (defn import-body [text]
   (let [matched-profile (first (keep (fn [[profile schema-name]]
@@ -69,9 +90,8 @@
       (throw (ex-info "unsupported or malformed STEP header" {:supported-schemas schemas})))
   (let [entities (entity-lines text)
         kind (fn [expr] (second (re-find #"^([A-Z0-9_]+)\(" expr)))
-        unsupported (remove #{"CARTESIAN_POINT" "VERTEX_POINT" "EDGE_CURVE" "ORIENTED_EDGE" "EDGE_LOOP"
-                              "FACE_OUTER_BOUND" "ADVANCED_FACE" "CLOSED_SHELL" "MANIFOLD_SOLID_BREP"}
-                            (set (map (comp kind val) entities)))]
+        unsupported (remove (into metadata-entities geometry-entities)
+                            (set (keep (comp kind val) entities)))]
     (when (seq unsupported) (throw (ex-info "unsupported STEP entities" {:entities (vec (sort unsupported))})))
     (let [uid #(document/stable-uuid "step-import" %)
           points (into {} (for [[id expr] entities :when (= "CARTESIAN_POINT" (kind expr))]
@@ -80,22 +100,38 @@
           vs (into {} (for [[id expr] entities :when (= "VERTEX_POINT" (kind expr))]
                         (let [point-id (first (refs expr)) vid (uid (str "v/" id))]
                           [id (brep/vertex vid (get points point-id) 1.0e-6)])))
+          circles (into {} (for [[id expr] entities :when (= "CIRCLE" (kind expr))]
+                             [id {:curve/kind :circle :curve/radius (parse-double (second (re-find #",([-+0-9Ee.]+)\)$" expr)))}]))
           es (into {} (for [[id expr] entities :when (= "EDGE_CURVE" (kind expr))]
-                        (let [[a b] (refs expr)]
+                        (let [[a b curve-ref] (refs expr)]
                           [id (brep/edge (uid (str "e/" id)) (:vertex/id (get vs a)) (:vertex/id (get vs b))
-                                         {:curve/kind :line})])))
+                                         (get circles curve-ref {:curve/kind :line}))])))
           oes (into {} (for [[id expr] entities :when (= "ORIENTED_EDGE" (kind expr))]
                          (let [edge-id (first (refs expr))]
                            [id (brep/coedge (:edge/id (get es edge-id)) (bool-value expr))])))
           ls (into {} (for [[id expr] entities :when (= "EDGE_LOOP" (kind expr))]
                         [id (brep/topology-loop (uid (str "l/" id)) (mapv oes (refs expr)))]))
-          bounds (into {} (for [[id expr] entities :when (= "FACE_OUTER_BOUND" (kind expr))]
-                            [id (first (refs expr))]))
+          bounds (into {} (for [[id expr] entities :when (#{"FACE_OUTER_BOUND" "FACE_BOUND"} (kind expr))]
+                            [id {:loop (first (refs expr)) :outer? (= "FACE_OUTER_BOUND" (kind expr))}]))
+          surfaces (into {} (for [[id expr] entities :when (#{"PLANE" "CYLINDRICAL_SURFACE" "TOROIDAL_SURFACE"} (kind expr))]
+                              (let [surface-kind (kind expr)
+                                    numbers (mapv parse-double (map second (re-seq #",([-+0-9Ee.]+)" expr)))
+                                    surface (case surface-kind
+                                              "PLANE" (brep/analytic-surface :plane {:origin [0 0 0] :normal [0 0 1]})
+                                              "CYLINDRICAL_SURFACE" (brep/analytic-surface :cylinder {:origin [0 0 0] :axis [0 0 1] :radius (last numbers)})
+                                              "TOROIDAL_SURFACE" (brep/analytic-surface :torus {:center [0 0 0] :axis [0 0 1]
+                                                                                                :major-radius (first numbers) :minor-radius (second numbers)}))]
+                                [id surface])))
           fs (into {} (for [[id expr] entities :when (= "ADVANCED_FACE" (kind expr))]
-                        (let [bound-id (first (refs expr)) loop (get ls (get bounds bound-id))]
+                        (let [all-refs (refs expr) bound-ids (filterv bounds all-refs)
+                              surface-id (first (filter surfaces all-refs))
+                              outer-bound (first (filter #(get-in bounds [% :outer?]) bound-ids))
+                              inner-bounds (remove #{outer-bound} bound-ids)
+                              loop (get ls (get-in bounds [outer-bound :loop]))]
                           [id (brep/face (uid (str "f/" id))
-                                         (brep/analytic-surface :plane {:origin [0 0 0] :normal [0 0 1]})
-                                         (:loop/id loop) [] (bool-value expr))])))
+                                         (get surfaces surface-id (brep/analytic-surface :plane {:origin [0 0 0] :normal [0 0 1]}))
+                                         (:loop/id loop) (mapv #(get-in ls [(get-in bounds [% :loop]) :loop/id]) inner-bounds)
+                                         (bool-value expr))])))
           ss (into {} (for [[id expr] entities :when (= "CLOSED_SHELL" (kind expr))]
                         [id (brep/shell (uid (str "s/" id)) (mapv #(get-in fs [% :face/id]) (refs expr)) true)]))
           solid (first (for [[id expr] entities :when (= "MANIFOLD_SOLID_BREP" (kind expr))] [id expr]))

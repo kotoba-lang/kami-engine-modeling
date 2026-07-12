@@ -40,3 +40,20 @@
       (is (brep/valid-body? decoded))))
   (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"unsupported STEP application profile"
                         (step/export-body (brep/box-body "bad-profile" 1 1 1 1.0e-6) {:profile :ap999}))))
+
+#?(:clj
+   (deftest nist-external-ap203-periodic-analytic-brep-import
+     (let [text (slurp "test/fixtures/nist/nist_ftc_11_asme1_rb.stp")
+           inspection (step/inspect-file text)
+           body (step/import-body text)]
+       (is (= :ap203 (:step/profile inspection)))
+       (is (empty? (:step/unsupported inspection)))
+       (is (= 6 (get-in inspection [:step/entities "ADVANCED_FACE"])))
+       (is (= 2 (get-in inspection [:step/entities "CYLINDRICAL_SURFACE"])))
+       (is (= 2 (get-in inspection [:step/entities "TOROIDAL_SURFACE"])))
+       (is (brep/valid-body? body))
+       (is (= 6 (count (:brep/vertices body))))
+       (is (= 6 (count (:brep/edges body))))
+       (is (= 6 (count (:brep/faces body))))
+       (is (= 6 (count (filter #(= :circle (get-in % [:edge/curve :curve/kind]))
+                               (vals (:brep/edges body)))))))))

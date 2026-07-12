@@ -36,7 +36,8 @@
   {:vertex/id id :vertex/point point :vertex/tolerance tolerance})
 
 (defn edge [id start end curve]
-  (when-not (and (uuid? id) (uuid? start) (uuid? end) (not= start end) (map? curve))
+  (when-not (and (uuid? id) (uuid? start) (uuid? end) (map? curve)
+                 (or (not= start end) (#{:circle :ellipse :periodic} (:curve/kind curve))))
     (throw (ex-info "invalid B-rep edge" {:id id :start start :end end})))
   {:edge/id id :edge/start start :edge/end end :edge/curve curve})
 
@@ -46,7 +47,7 @@
   {:coedge/edge edge-id :coedge/orientation orientation})
 
 (defn topology-loop [id coedges]
-  (when-not (and (uuid? id) (<= 3 (count coedges)))
+  (when-not (and (uuid? id) (seq coedges))
     (throw (ex-info "invalid B-rep loop" {:id id})))
   {:loop/id id :loop/coedges (vec coedges)})
 
