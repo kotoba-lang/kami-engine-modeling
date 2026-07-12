@@ -32,6 +32,21 @@
     (is (= (:mesh/uvs base) (:mesh/uvs flipped)))
     (is (thrown? #?(:clj Exception :cljs js/Error) (m/orient-outward (m/quad 2 2))))))
 
+(deftest bsp-boolean-supports-overlapping-closed-meshes
+  (let [a (m/cube 2) b (m/translate-vertices (m/cube 2) (range 8) [1 0 0])
+        union (m/boolean-mesh a b :union)
+        reverse-union (m/boolean-mesh b a :union)
+        intersection (m/boolean-mesh a b :intersection)
+        difference (m/boolean-mesh a b :difference)]
+    (is (m/valid-mesh? union))
+    (is (m/valid-mesh? intersection))
+    (is (m/valid-mesh? difference))
+    (is (< (Math/abs (- 12.0 (m/signed-volume union))) 1.0e-6))
+    (is (< (Math/abs (- 12.0 (m/signed-volume reverse-union))) 1.0e-6))
+    (is (< (Math/abs (- 4.0 (m/signed-volume intersection))) 1.0e-6))
+    (is (< (Math/abs (- 4.0 (m/signed-volume difference))) 1.0e-6))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/boolean-mesh a b :xor)))))
+
 (deftest face-bevel-builds-a-valid-chamfer-ring
   (let [base (m/cube 2)
         beveled (m/bevel-face base 1 0.25 0.2)]

@@ -1,7 +1,7 @@
 (ns kami.modeling
   "Portable polygon-editing domain engine. Meshes are immutable EDN values;
   every operation returns a new mesh suitable for undo/redo and persistence."
-  (:require [clojure.set :as set]))
+  (:require [clojure.set :as set] [kami.modeling.csg :as csg]))
 
 (defn mesh
   "Construct a mesh from vertex positions and polygon index vectors."
@@ -319,6 +319,16 @@
     (when (< (abs-value volume) 1.0e-12)
       (throw (ex-info "cannot orient a zero-volume or open mesh" {:signed-volume volume})))
     (if (neg? volume) (flip-faces m (range (count (:mesh/faces m)))) m)))
+
+(defn boolean-mesh
+  "BSP constructive-solid-geometry Boolean for closed polygon meshes.
+  Supported operations are `:union`, `:intersection`, and `:difference`."
+  [a b operation]
+  (when-not (and (valid-mesh? a) (valid-mesh? b))
+    (throw (ex-info "Boolean requires valid meshes" {})))
+  (let [result (csg/boolean-mesh (orient-outward a) (orient-outward b) operation)]
+    (when-not (valid-mesh? result) (throw (ex-info "Boolean produced invalid topology" {:operation operation})))
+    (orient-outward result)))
 (defn- ray-triangle [origin direction a b c]
   (let [e1 (vsub b a) e2 (vsub c a) h (cross direction e2) det (dot e1 h)]
     (when (> (abs-value det) 1.0e-8)
