@@ -1,6 +1,6 @@
 (ns kami.modeling-cae-test
   (:require [clojure.test :refer [deftest is]] [clojure.java.io :as io] [kami.modeling.cae :as cae]
-            [kami.modeling.document :as document]))
+            [kami.modeling.document :as document] [num.cpu :as num-cpu]))
 
 (def uid #(document/stable-uuid "cae-test" %))
 (def steel (cae/isotropic-material (uid "steel") {:name "Steel" :youngs-modulus 200.0e9
@@ -131,3 +131,17 @@
                  (cae/qualification-manifest study candidate reference
                                              [(assoc comparison :comparison/pass? false)]
                                              {:evidence/source "x" :evidence/license "x"})))))
+
+(deftest injected-num-pcg-matches-reference-cae-and-retains-provenance
+  (let [study (bar-study 64)
+        reference (cae/solve-linear-static-bar study)
+        accelerated (cae/solve-linear-static-bar-accelerated
+                     study (num-cpu/cpu-backend) {:tolerance 1.0e-10 :max-iterations 200})]
+    (is (= :converged (get-in accelerated [:result/numerics :solver/status])))
+    (is (= :cpu (get-in accelerated [:result/numerics :solver/backend])))
+    (is (< (get-in accelerated [:result/numerics :solver/relative-residual]) 1.0e-10))
+    (is (every? true? (map #(< (Math/abs (- %1 %2)) 1.0e-10)
+                           (:result/displacement reference) (:result/displacement accelerated))))
+    (is (< (Math/abs (get-in accelerated [:result/balance :residual])) 1.0e-7))
+    (is (= (:result/adapter reference) (:result/adapter accelerated)))
+    (is (cae/result-current? study accelerated))))

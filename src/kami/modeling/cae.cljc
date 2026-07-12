@@ -2,7 +2,9 @@
   "Solver-neutral CAE study data and a small, independently checkable 1D linear
   static reference solver. Results carry complete provenance and qualification."
   (:require [clojure.string :as string]
-            [kami.modeling.document :as document]))
+            [kami.modeling.document :as document]
+            [num.array :as num-array] [num.protocol :as num-protocol]
+            [num.solver :as num-solver] [num.sparse :as num-sparse]))
 
 (def analysis-kinds #{:linear-static :steady-thermal :modal})
 (def qualification-levels #{:experimental :verified :qualified})
@@ -128,6 +130,46 @@
         external-work (reduce + (map * displacement forces))]
     {:result/study (:study/id study) :result/source-revision (:study/source-revision study)
      :result/adapter (:study/adapter study) :result/qualification :verified
+     :result/displacement displacement :result/reactions reactions
+     :result/strain-energy energy :result/external-work external-work
+     :result/balance {:applied-force (reduce + forces) :reaction-force (reduce + (vals reactions))
+                      :residual (+ (reduce + forces) (reduce + (vals reactions)))}}))
+
+(defn solve-linear-static-bar-accelerated
+  "Production sparse path over an injected num IBackend (CPU/WGSL/CUDA). The
+  stiffness solve stays device-resident through PCG; result semantics match the
+  transparent reference solver."
+  [study backend options]
+  (when-not (and (= :linear-static (:study/kind study))
+                 (= :bar-1d (get-in study [:study/mesh :mesh/kind]))
+                 (num-protocol/backend? backend))
+    (throw (ex-info "accelerated solver requires linear-static bar and num backend" {})))
+  (let [mesh (:study/mesh study) n (count (:mesh/nodes mesh))
+        k (assemble-bar mesh (get-in study [:study/material :material/youngs-modulus]))
+        forces (reduce (fn [v {:load/keys [node value]}]
+                         (when-not (< -1 node n) (throw (ex-info "load node out of range" {:node node})))
+                         (update v node + value)) (vec (repeat n 0.0)) (:study/loads study))
+        prescribed (into {} (map (juxt :bc/node :bc/value) (:study/boundary-conditions study)))
+        free (vec (remove prescribed (range n)))
+        reduced-k (mapv (fn [i] (mapv #(get-in k [i %]) free)) free)
+        reduced-f (mapv (fn [i] (- (nth forces i)
+                                   (reduce + (map (fn [[j u]] (* (get-in k [i j]) u)) prescribed)))) free)
+        csr (num-sparse/dense->csr (count free) (count free) (mapcat identity reduced-k))
+        rhs (num-array/from-vec backend reduced-f [(count free)])
+        solved (num-solver/pcg backend csr rhs options)
+        free-u (num-array/->vec (:solver/x solved))
+        _rhs-freed (num-protocol/-free backend (:handle rhs))
+        _x-freed (num-protocol/-free backend (get-in solved [:solver/x :handle]))
+        displacement (reduce (fn [v [i u]] (assoc v i u))
+                             (reduce (fn [v [i u]] (assoc v i u)) (vec (repeat n 0.0)) prescribed)
+                             (map vector free free-u))
+        internal (mapv (fn [row] (reduce + (map * row displacement))) k)
+        reactions (into {} (map (fn [i] [i (- (nth internal i) (nth forces i))]) (keys prescribed)))
+        energy (* 0.5 (reduce + (map * displacement internal)))
+        external-work (reduce + (map * displacement forces))]
+    {:result/study (:study/id study) :result/source-revision (:study/source-revision study)
+     :result/adapter (:study/adapter study) :result/qualification :verified
+     :result/numerics (dissoc solved :solver/x)
      :result/displacement displacement :result/reactions reactions
      :result/strain-energy energy :result/external-work external-work
      :result/balance {:applied-force (reduce + forces) :reaction-force (reduce + (vals reactions))

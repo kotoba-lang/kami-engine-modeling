@@ -93,6 +93,11 @@ checked fixture is an actual CalculiX CrunchiX 2.16 execution of the same
 checksums are retained; the imported nine-node displacement field agrees with
 the Kotoba solver within the declared tolerance. A broader multi-case public
 corpus is still required for general external-solver qualification.
+The production sparse bar path accepts any `kotoba-lang/num` backend and solves
+the reduced CSR system with device-resident PCG. Its CPU-oracle gate uses 64
+elements and matches the transparent Gaussian reference displacement, reaction
+balance and study adapter provenance; the same path dispatches cuSPARSE/cuBLAS
+when a qualified CUDA backend is injected.
 
 `kami.modeling.feature-graph` generalizes the linear modifier stack into a typed
 dependency DAG with cycle/type diagnostics, deterministic cache keys, partial
@@ -138,4 +143,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 82 tests / 639 assertions).
+Run `clojure -M:test` (currently 83 tests / 646 assertions).
