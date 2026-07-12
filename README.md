@@ -31,6 +31,12 @@ views, semantic dimensions, stale/orphan diagnostics, assembly BOM generation,
 ISO/ASME-oriented paper/projection settings and deterministic vector SVG output.
 Section/detail views, hidden-line removal, GD&T and DXF/PDF remain subsequent gates.
 
+`kami.modeling.cae` adds solver-neutral, revision-bound studies with SI units,
+materials, boundary conditions, loads, adapter provenance and stale-result
+detection. Its transparent 1D linear-static bar FEM reference is verified
+against the analytic solution, reaction/energy balance and mesh refinement. It
+is a verification oracle, not a safety-certified production solver.
+
 `kami.modeling.document` is the first shared CAD foundation: a versioned
 immutable document graph with stable UUID nodes, explicit units and modeling
 tolerance, deterministic revision IDs, projection provenance/staleness checks,
@@ -38,4 +44,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 37 tests / 198 assertions).
+Run `clojure -M:test` (currently 40 tests / 209 assertions).
