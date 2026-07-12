@@ -74,6 +74,31 @@
   (let [c (face-center m face-index)]
     (transform-face m face-index #(mapv + c (mapv (fn [x y] (* factor (- x y))) % c)))))
 
+(defn selected-vertex-indices
+  "Return unique vertex indices used by a set of polygon faces."
+  [m face-indices]
+  (let [faces (:mesh/faces m) indices (vec (distinct (mapcat #(nth faces %) face-indices)))]
+    (when (empty? indices) (throw (ex-info "at least one face must be selected" {})))
+    indices))
+
+(defn transform-faces
+  "Transform the union of vertices belonging to selected faces exactly once."
+  [m face-indices f]
+  (let [ids (set (selected-vertex-indices m face-indices))]
+    (update m :mesh/vertices
+            #(mapv (fn [i p] (if (ids i) (f p) p)) (range) %))))
+
+(defn translate-faces [m face-indices delta]
+  (transform-faces m face-indices #(mapv + % delta)))
+
+(defn scale-faces [m face-indices factor]
+  (when-not (pos? factor) (throw (ex-info "scale factor must be positive" {:factor factor})))
+  (let [ids (selected-vertex-indices m face-indices)
+        vertices (:mesh/vertices m) n (count ids)
+        center (mapv #(/ % n) (reduce (fn [sum i] (mapv + sum (nth vertices i))) [0 0 0] ids))]
+    (transform-faces m face-indices
+                     #(mapv + center (mapv (fn [x c] (* factor (- x c))) % center)))))
+
 (defn inset-face
   "Inset a polygon toward its center. Replaces the selected polygon with an
   inner cap at the same face index and adds one ring quad per edge."

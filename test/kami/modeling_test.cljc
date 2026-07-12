@@ -53,6 +53,17 @@
     (is (= 2 (count (m/pick-element base [0 0 4] [0 0 -1] :edge))))
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (m/translate-edge base [0 6] [1 0 0])))))
 
+(deftest multi-face-transforms-touch-shared-vertices-once
+  (let [base (m/cube 2)
+        moved (m/translate-faces base [1 3] [0 0 1])
+        scaled (m/scale-faces base [1 3] 2)]
+    (is (= #{3 2 4 5 6 7} (set (m/selected-vertex-indices base [1 3]))))
+    (is (= [1.0 1.0 2.0] (nth (:mesh/vertices moved) 6)))
+    (is (= [1.0 -1.0 2.0] (nth (:mesh/vertices moved) 5)))
+    (is (= 8 (count (:mesh/vertices scaled))))
+    (is (m/valid-mesh? moved))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/translate-faces base [] [1 0 0])))))
+
 (deftest multi-object-scene-editing
   (let [cube-a (m/object 1 "Cube" (m/cube 2))
         base (m/add-object (m/scene) cube-a)
