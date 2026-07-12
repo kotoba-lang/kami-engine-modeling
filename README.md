@@ -42,6 +42,12 @@ dependency DAG with cycle/type diagnostics, deterministic cache keys, partial
 invalidation, disabled nodes, structured evaluation failures and last-valid
 preview retention. The existing UI stack remains a compatible projection.
 
+`kami.modeling.large-scene` separates shared geometry from instances and adds
+AABB BVH construction, frustum culling, distance LOD, spatial chunks,
+resident-byte-budget streaming plans and portable stable picking IDs. The data
+gate covers 10,000 instances collapsed to one shared upload and instanced draw;
+browser/device p95 and 100-million-triangle streaming gates remain outstanding.
+
 `kami.modeling.document` is the first shared CAD foundation: a versioned
 immutable document graph with stable UUID nodes, explicit units and modeling
 tolerance, deterministic revision IDs, projection provenance/staleness checks,
@@ -49,4 +55,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 43 tests / 223 assertions).
+Run `clojure -M:test` (currently 46 tests / 238 assertions).

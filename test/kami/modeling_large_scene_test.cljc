@@ -1,0 +1,54 @@
+(ns kami.modeling-large-scene-test
+  (:require [clojure.test :refer [deftest is]] [kami.modeling.document :as document]
+            [kami.modeling.large-scene :as large]))
+
+(def uid #(document/stable-uuid "large-scene-test" %))
+(def cube-geometry
+  (large/geometry (uid "cube") [{:lod/level 0 :lod/triangles 12 :lod/max-distance 20}
+                                 {:lod/level 1 :lod/triangles 6 :lod/max-distance 100}
+                                 {:lod/level 2 :lod/triangles 2 :lod/max-distance 1.0e12}]
+                  {:min [-0.5 -0.5 -0.5] :max [0.5 0.5 0.5]} 1024))
+(def test-frustum
+  (large/frustum [{:normal [1 0 0] :distance 10} {:normal [-1 0 0] :distance 10}
+                  {:normal [0 1 0] :distance 10} {:normal [0 -1 0] :distance 10}
+                  {:normal [0 0 1] :distance 10} {:normal [0 0 -1] :distance 10}]))
+
+(deftest bvh-frustum-lod-and-streaming
+  (let [inside (large/instance (uid "inside") (:geometry/id cube-geometry) [0 0 0])
+        far-inside (large/instance (uid "edge") (:geometry/id cube-geometry) [9 0 0])
+        outside (large/instance (uid "outside") (:geometry/id cube-geometry) [30 0 0])
+        geometries {(:geometry/id cube-geometry) cube-geometry}
+        bvh (large/build-bvh geometries [inside far-inside outside] 1)
+        visible (large/visible-instances geometries bvh test-frustum)
+        plan (large/streaming-plan geometries visible [0 0 0] #{} 2048)]
+    (is (= #{(:instance/id inside) (:instance/id far-inside)} (set (map :instance/id visible))))
+    (is (= 0 (:lod/level (large/select-lod cube-geometry [0 0 0] inside))))
+    (is (= 1 (count (:stream/selected plan))))
+    (is (= 1024 (:stream/upload-bytes plan)))
+    (is (= 2 (get-in plan [:stream/draws 0 :instance-count])))
+    (is (= 1 (count (large/spatial-chunks [inside far-inside] 10))))))
+
+(deftest ten-thousand-instance-deterministic-stress-gate
+  (let [instances (mapv (fn [i] (large/instance (uid (str "stress/" i)) (:geometry/id cube-geometry)
+                                                  [(mod i 100) (mod (quot i 100) 100) 0])) (range 10000))
+        geometries {(:geometry/id cube-geometry) cube-geometry}
+        bvh (large/build-bvh geometries instances 16)
+        all-frustum (large/frustum [{:normal [1 0 0] :distance 1.0e6} {:normal [-1 0 0] :distance 1.0e6}
+                                    {:normal [0 1 0] :distance 1.0e6} {:normal [0 -1 0] :distance 1.0e6}
+                                    {:normal [0 0 1] :distance 1.0e6} {:normal [0 0 -1] :distance 1.0e6}])
+        visible (large/visible-instances geometries bvh all-frustum)
+        chunks (large/spatial-chunks visible 10)
+        plan (large/streaming-plan geometries visible [0 0 0] #{} 1024)]
+    (is (= 10000 (count visible)))
+    (is (= 100 (count chunks)))
+    (is (= 1 (count (:stream/draws plan))))
+    (is (= 10000 (get-in plan [:stream/draws 0 :instance-count])))
+    (is (= 1024 (:stream/upload-bytes plan)))
+    (is (= (mapv :instance/id visible) (mapv :instance/id (large/visible-instances geometries bvh all-frustum))))))
+
+(deftest stable-picking-and-residency-budget
+  (let [a (large/instance (uid "pick") (:geometry/id cube-geometry) [0 0 0])
+        plan (large/streaming-plan {(:geometry/id cube-geometry) cube-geometry} [a] [0 0 0] #{} 100)]
+    (is (= (:instance/picking-id a) (:instance/picking-id (large/instance (uid "pick") (:geometry/id cube-geometry) [5 0 0]))))
+    (is (empty? (:stream/selected plan)))
+    (is (= 1 (count (:stream/deferred plan))))))
