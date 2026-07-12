@@ -85,9 +85,11 @@ Independent solver results can now be compared field-by-field with absolute and
 relative tolerances. A qualification manifest records candidate/reference
 adapter versions, evidence source/license, comparison samples and a stable
 revision, and cannot be emitted for failed or same-adapter comparisons. The
-checked test exercises the CalculiX-shaped adapter contract; an independently
-generated public result corpus is still required before claiming external
-solver qualification.
+checked fixture is an actual CalculiX CrunchiX 2.16 execution of the same
+8-element bar case. The input, FRD result, container image digest and SHA-256
+checksums are retained; the imported nine-node displacement field agrees with
+the Kotoba solver within the declared tolerance. A broader multi-case public
+corpus is still required for general external-solver qualification.
 
 `kami.modeling.feature-graph` generalizes the linear modifier stack into a typed
 dependency DAG with cycle/type diagnostics, deterministic cache keys, partial
@@ -133,4 +135,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 81 tests / 631 assertions).
+Run `clojure -M:test` (currently 81 tests / 632 assertions).

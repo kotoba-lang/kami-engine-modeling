@@ -1,7 +1,8 @@
 (ns kami.modeling.cae
   "Solver-neutral CAE study data and a small, independently checkable 1D linear
   static reference solver. Results carry complete provenance and qualification."
-  (:require [kami.modeling.document :as document]))
+  (:require [clojure.string :as string]
+            [kami.modeling.document :as document]))
 
 (def analysis-kinds #{:linear-static :steady-thermal :modal})
 (def qualification-levels #{:experimental :verified :qualified})
@@ -413,6 +414,23 @@
        :comparison/max-absolute-error (apply max 0 (map :sample/absolute-error samples))
        :comparison/max-relative-error (apply max 0 (map :sample/relative-error samples))
        :comparison/pass? (every? :sample/pass? samples)})))
+
+(defn import-calculix-frd-displacements
+  "Read the nodal DISP dataset from an ASCII CalculiX FRD result."
+  [text adapter]
+  (let [lines (string/split-lines text)
+        [_ values]
+        (reduce (fn [[reading result] line]
+                  (cond
+                    (string/includes? line " DISP ") [true result]
+                    (and reading (re-find #"^\s*-3" line)) [false result]
+                    (and reading (re-find #"^\s*-1\s+\d+" line))
+                    (let [numbers (mapv parse-double (re-seq #"[-+]?\d+\.\d+E[-+]\d+" line))]
+                      [reading (conj result numbers)])
+                    :else [reading result])) [false []] lines)]
+    (when-not (seq values) (throw (ex-info "CalculiX FRD has no displacement dataset" {})))
+    {:result/adapter adapter :result/displacement-3d values
+     :result/displacement (mapv first values) :result/qualification :external-reference}))
 
 (defn qualification-manifest [study candidate reference comparisons evidence]
   (when-not (and (uuid? (:study/id study)) (seq comparisons)

@@ -1,5 +1,5 @@
 (ns kami.modeling-cae-test
-  (:require [clojure.test :refer [deftest is]] [kami.modeling.cae :as cae]
+  (:require [clojure.test :refer [deftest is]] [clojure.java.io :as io] [kami.modeling.cae :as cae]
             [kami.modeling.document :as document]))
 
 (def uid #(document/stable-uuid "cae-test" %))
@@ -109,16 +109,20 @@
 (deftest independent-adapter-comparison-and-qualified-manifest
   (let [study (bar-study 8)
         candidate (cae/solve-linear-static-bar study)
-        ;; External adapters enter through this solver-neutral result contract.
-        reference (assoc candidate :result/adapter {:adapter/id "calculix" :adapter/version "2.22"}
-                                   :result/displacement (mapv #(+ % 1.0e-14) (:result/displacement candidate)))
+        reference (cae/import-calculix-frd-displacements
+                   (slurp (io/file "test/fixtures/calculix/uniaxial-bar-8.frd"))
+                   {:adapter/id "calculix.ccx" :adapter/version "2.16"
+                    :adapter/image-digest "sha256:b18b56fec00ad965d85e091454f26195d62115ee9a05feb4c130fa15406b6f7a"})
         comparison (cae/compare-result-fields candidate reference :result/displacement 1.0e-12 1.0e-8)
         manifest (cae/qualification-manifest
                   study candidate reference [comparison]
-                  {:evidence/source "CalculiX ccx 2.22 result fixture"
-                   :evidence/license "GPL-2.0-or-later" :evidence/case "uniaxial-bar-8"})]
+                  {:evidence/source "CalculiX ccx 2.16 executed FRD result"
+                   :evidence/license "GPL-2.0-or-later" :evidence/case "uniaxial-bar-8"
+                   :evidence/input-sha256 "31bfbcab4124be710eacbdc6db813449e5e14bf46f0528b3bed07e1a9c2e54e8"
+                   :evidence/result-sha256 "e032d250c876fdbac42e64e2b2238eed448d127cebf960cb76622a83085d4465"})]
     (is (:comparison/pass? comparison))
     (is (= 9 (count (:comparison/samples comparison))))
+    (is (= 1.0e-5 (last (:result/displacement reference))))
     (is (= :qualified (:qualification/status manifest)))
     (is (string? (:qualification/revision manifest)))
     (is (thrown? #?(:clj Exception :cljs js/Error)
