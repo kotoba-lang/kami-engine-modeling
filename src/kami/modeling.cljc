@@ -87,6 +87,32 @@
     (mesh (into vertices inner)
           (into (assoc faces face-index inner-ids) ring))))
 
+(declare vsub cross)
+
+(defn face-normal
+  "Return a normalized polygon normal using the first non-collinear triangle."
+  [{:mesh/keys [vertices faces]} face-index]
+  (let [face (nth faces face-index)
+        origin (nth vertices (first face))
+        candidates (map (fn [[b c]] (cross (vsub (nth vertices b) origin)
+                                            (vsub (nth vertices c) origin)))
+                        (partition 2 1 (rest face)))
+        normal (first (filter #(> (reduce + (map * % %)) 1.0e-16) candidates))]
+    (when-not normal (throw (ex-info "face has no stable normal" {:face-index face-index})))
+    (let [length (#?(:clj Math/sqrt :cljs js/Math.sqrt) (reduce + (map * normal normal)))]
+      (mapv #(/ % length) normal))))
+
+(defn bevel-face
+  "Create a chamfer ring around a face. `width` controls the inset fraction
+  and `depth` offsets the new cap along its geometric normal."
+  [m face-index width depth]
+  (when-not (and (number? width) (< 0 width 1))
+    (throw (ex-info "bevel width must be between 0 and 1" {:width width})))
+  (when-not (number? depth) (throw (ex-info "bevel depth must be numeric" {:depth depth})))
+  (let [normal (face-normal m face-index)
+        inset (inset-face m face-index (- 1 width))]
+    (translate-face inset face-index (mapv #(* depth %) normal))))
+
 (defn delete-face [m face-index]
   (update m :mesh/faces #(vec (concat (subvec % 0 face-index) (subvec % (inc face-index))))))
 

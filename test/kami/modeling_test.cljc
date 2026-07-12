@@ -22,6 +22,16 @@
     (is (= 0 (m/pick-face base [0 0 -4] [0 0 1])))
     (is (m/valid-mesh? (m/scale-face base 1 0.5)))))
 
+(deftest face-bevel-builds-a-valid-chamfer-ring
+  (let [base (m/cube 2)
+        beveled (m/bevel-face base 1 0.25 0.2)]
+    (is (= [0.0 0.0 1.0] (m/face-normal base 1)))
+    (is (= 12 (count (:mesh/vertices beveled))))
+    (is (= 10 (count (:mesh/faces beveled))))
+    (is (= [0.0 0.0 1.2] (m/face-center beveled 1)))
+    (is (m/valid-mesh? beveled))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/bevel-face base 1 1.0 0.2)))))
+
 (deftest vertex-edge-editing-and-picking
   (let [base (m/cube 2) vertex (m/translate-vertex base 6 [0 0 1])
         edge (m/translate-edge base [5 6] [1 0 0])]
