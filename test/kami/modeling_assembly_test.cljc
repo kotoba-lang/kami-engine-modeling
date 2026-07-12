@@ -115,3 +115,30 @@
     (is (= [(/ 32.0 3.0) (/ 32.0 3.0) (/ 32.0 3.0)]
            (get-in props [:assembly/parts 0 :mass/inertia-diagonal])))
     (is (empty? (assembly/interference model 1.0e-9)))))
+
+(deftest stable-identity-exchange-round-trip-and-integrity
+  (let [occurrences (mapv (fn [i]
+                            (assembly/occurrence (uid (str "exchange/occ/" i)) (:part/id block)
+                                                 {:transform (assoc assembly/identity-transform
+                                                                    :translation [(* i 3) 0 0])}))
+                          (range 1000))
+        model (assembly/assembly (uid "exchange/assembly") [block] occurrences [] {:default {}})
+        encoded (assembly/encode-package model)
+        decoded (assembly/import-package encoded)
+        package (assembly/export-package model)]
+    (is (= model decoded))
+    (is (= (set (keys (:assembly/occurrences model)))
+           (set (keys (:assembly/occurrences decoded)))))
+    (is (= 1000 (count (:assembly/occurrences decoded))))
+    (is (= encoded (assembly/encode-package decoded)))
+    (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"integrity check failed"
+                          (assembly/import-package
+                           (assoc-in package [:assembly-package/payload :assembly/configurations]
+                                     {:tampered {}}))))))
+
+(deftest duplicate-identities-fail-closed
+  (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"duplicate occurrence identity"
+                        (assembly/assembly (uid "duplicate/assembly") [block]
+                                           [(assembly/occurrence (uid "duplicate/occ") (:part/id block))
+                                            (assembly/occurrence (uid "duplicate/occ") (:part/id block))]
+                                           [] {:default {}}))))

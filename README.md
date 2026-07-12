@@ -42,7 +42,10 @@ General nonlinear closed-loop 6-DOF solving remains a subsequent gate.
 Nested subassembly instances now flatten to stable UUID paths with accumulated
 transforms and cycle diagnostics. Bounding-volume mass, center-of-mass and
 diagonal inertia are available per part/assembly; the data gate covers 1,000
-part occurrences with clearance checking.
+part occurrences with clearance checking. Canonical Kotoba EDN assembly
+packages preserve part, occurrence and mate UUIDs across deterministic
+round-trips, carry an integrity revision, reject tampering and duplicate IDs,
+and are gated with 1,000 occurrences.
 
 `kami.modeling.drawing` adds model-revision-associated sheets, orthographic box
 views, semantic dimensions, stale/orphan diagnostics, assembly BOM generation,
@@ -112,4 +115,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 76 tests / 599 assertions).
+Run `clojure -M:test` (currently 78 tests / 605 assertions).

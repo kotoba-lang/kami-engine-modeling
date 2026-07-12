@@ -2,7 +2,8 @@
   "Immutable assembly definitions, occurrences, configurations, mates and
   deterministic translational solving. Rotational/kinematic mate expansion
   builds on the same explicit constraint graph."
-  (:require [kami.modeling.document :as document]))
+  (:require [kami.modeling.document :as document]
+            #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
 
 (def mate-kinds #{:coincident :distance :parallel :concentric :angle :gear :rack-pinion :limit})
 (def joint-kinds #{:fixed :revolute :prismatic})
@@ -46,11 +47,52 @@
     (throw (ex-info "invalid translational mate parameters" {:id id :parameters parameters})))
   {:mate/id id :mate/kind kind :mate/a a :mate/b b :mate/parameters parameters})
 
+(defn- unique-index [label id-key values]
+  (let [values (vec values) indexed (into {} (map (juxt id-key identity) values))]
+    (when-not (= (count values) (count indexed))
+      (throw (ex-info (str "duplicate " (name label) " identity")
+                      {:error :duplicate-identity :kind label
+                       :ids (->> values (map id-key) frequencies (keep (fn [[id n]] (when (> n 1) id))) vec)})))
+    indexed))
+
+(declare valid-assembly? validation-errors)
+
 (defn assembly [id parts occurrences mates configurations]
-  {:assembly/id id :assembly/parts (into {} (map (juxt :part/id identity) parts))
-   :assembly/occurrences (into {} (map (juxt :occurrence/id identity) occurrences))
-   :assembly/mates (into {} (map (juxt :mate/id identity) mates))
+  {:assembly/id id :assembly/parts (unique-index :part :part/id parts)
+   :assembly/occurrences (unique-index :occurrence :occurrence/id occurrences)
+   :assembly/mates (unique-index :mate :mate/id mates)
    :assembly/configurations (or configurations {:default {}})})
+
+(def assembly-exchange-schema 1)
+
+(defn export-package
+  "Canonical EDN exchange envelope. UUID identities are preserved, never
+  regenerated from ordering or names."
+  [assembly]
+  (when-not (valid-assembly? assembly)
+    (throw (ex-info "cannot export invalid assembly" {:errors (validation-errors assembly)})))
+  (let [payload (document/canonical-form assembly)]
+    {:assembly-package/schema assembly-exchange-schema
+     :assembly-package/format :kotoba.edn
+     :assembly-package/revision (document/revision-id {:assembly payload})
+     :assembly-package/payload payload}))
+
+(defn encode-package [assembly]
+  (pr-str (document/canonical-form (export-package assembly))))
+
+(defn import-package [encoded]
+  (let [package (if (string? encoded) (edn/read-string encoded) encoded)
+        payload (:assembly-package/payload package)
+        expected (document/revision-id {:assembly (document/canonical-form payload)})]
+    (when-not (= assembly-exchange-schema (:assembly-package/schema package))
+      (throw (ex-info "unsupported assembly exchange schema"
+                      {:schema (:assembly-package/schema package) :supported assembly-exchange-schema})))
+    (when-not (= expected (:assembly-package/revision package))
+      (throw (ex-info "assembly exchange integrity check failed"
+                      {:expected expected :actual (:assembly-package/revision package)})))
+    (when-not (valid-assembly? payload)
+      (throw (ex-info "imported assembly is invalid" {:errors (validation-errors payload)})))
+    payload))
 
 (defn validation-errors [assembly]
   (let [parts (:assembly/parts assembly) occurrences (:assembly/occurrences assembly)
