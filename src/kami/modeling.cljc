@@ -449,6 +449,7 @@
 
 (defn- sin-value [x] #?(:clj (Math/sin x) :cljs (js/Math.sin x)))
 (defn- cos-value [x] #?(:clj (Math/cos x) :cljs (js/Math.cos x)))
+(defn- sqrt-value [x] #?(:clj (Math/sqrt x) :cljs (js/Math.sqrt x)))
 (defn transform-point
   "Apply object scale, XYZ Euler rotation (radians), then translation."
   [point {:object/keys [translation rotation scale]}]
@@ -511,13 +512,98 @@
                       (map-indexed vector (:mesh/faces m)))]
     (mesh @vertices (vec faces))))
 
+(def modifier-registry
+  {:mirror {:input :mesh :output :mesh}
+   :subdivision {:input :mesh :output :mesh}
+   :array {:input :mesh :output :mesh}
+   :translate {:input :mesh :output :mesh}
+   :scale {:input :mesh :output :mesh}
+   :triangulate {:input :mesh :output :mesh}
+   :flip-normals {:input :mesh :output :mesh}
+   :weld {:input :mesh :output :mesh}
+   :solidify {:input :mesh :output :mesh}
+   :planar-unwrap {:input :mesh :output :mesh}})
+
+(defn triangulate-mesh [m]
+  (mesh (:mesh/vertices m)
+        (vec (mapcat (fn [face]
+                       (if (= 3 (count face)) [face]
+                         (mapv (fn [i] [(first face) (nth face i) (nth face (inc i))])
+                               (range 1 (dec (count face)))))) (:mesh/faces m)))
+        (:mesh/uvs m)))
+
+(defn scale-mesh [m factors]
+  (when-not (and (= 3 (count factors)) (every? number? factors) (every? #(not (zero? %)) factors))
+    (throw (ex-info "scale modifier requires three non-zero factors" {:factors factors})))
+  (mesh (mapv #(mapv * % factors) (:mesh/vertices m)) (:mesh/faces m) (:mesh/uvs m)))
+
+(defn weld-mesh [m tolerance]
+  (when-not (and (number? tolerance) (pos? tolerance))
+    (throw (ex-info "weld tolerance must be positive" {:tolerance tolerance})))
+  (let [vertices (:mesh/vertices m)
+        canonical (reduce (fn [{:keys [points mapping] :as state} [old-id point]]
+                            (if-let [new-id (first (keep-indexed
+                                                   (fn [i candidate]
+                                                     (let [d2 (reduce + (map (fn [a b] (let [d (- a b)] (* d d))) point candidate))]
+                                                       (when (<= d2 (* tolerance tolerance)) i))) points))]
+                              (assoc state :mapping (assoc mapping old-id new-id))
+                              {:points (conj points point) :mapping (assoc mapping old-id (count points))}))
+                          {:points [] :mapping {}} (map-indexed vector vertices))
+        faces (->> (:mesh/faces m) (mapv #(mapv (:mapping canonical) %))
+                   (remove #(not= (count %) (count (distinct %)))) vec)]
+    (mesh (:points canonical) faces)))
+
+(defn solidify-mesh [m thickness]
+  (when-not (and (number? thickness) (not (zero? thickness)))
+    (throw (ex-info "solidify thickness must be non-zero" {:thickness thickness})))
+  (let [n (count (:mesh/vertices m))
+        normals (mapv (fn [vertex-id]
+                        (let [adjacent (keep-indexed (fn [face-id face] (when (some #{vertex-id} face) face-id)) (:mesh/faces m))]
+                          (if (seq adjacent)
+                            (let [sum (reduce #(mapv + %1 %2) [0 0 0] (map #(face-normal m %) adjacent))
+                                  length (sqrt-value (dot sum sum))]
+                              (if (zero? length) [0 0 1] (mapv #(/ % length) sum))) [0 0 1]))) (range n))
+        outer (mapv (fn [p normal] (mapv + p (mapv #(* (/ thickness 2) %) normal))) (:mesh/vertices m) normals)
+        inner (mapv (fn [p normal] (mapv - p (mapv #(* (/ thickness 2) %) normal))) (:mesh/vertices m) normals)
+        outer-faces (:mesh/faces m) inner-faces (mapv #(mapv (fn [i] (+ n i)) (reverse %)) (:mesh/faces m))
+        boundary (->> (mesh-edges m)
+                      (filter (fn [edge]
+                                (= 1 (count (filter (fn [face] (and (some #{(first edge)} face)
+                                                                    (some #{(second edge)} face))) (:mesh/faces m)))))))
+        sides (mapv (fn [[a b]] [a b (+ n b) (+ n a)]) boundary)]
+    (mesh (into outer inner) (into (into outer-faces inner-faces) sides))))
+
+(defn validate-modifier [{:modifier/keys [kind options]}]
+  (when-not (modifier-registry kind) (throw (ex-info "unknown modifier" {:kind kind})))
+  (case kind
+    :mirror (when-not (#{:x :y :z} (:axis options :x)) (throw (ex-info "invalid mirror axis" options)))
+    :subdivision (when-not (and (integer? (:levels options 1)) (<= 0 (:levels options 1) 4))
+                   (throw (ex-info "subdivision levels must be 0..4" options)))
+    :array (when-not (and (integer? (:count options 2)) (pos? (:count options 2)) (= 3 (count (:offset options [2.5 0 0]))))
+             (throw (ex-info "invalid array options" options)))
+    :translate (when-not (= 3 (count (:offset options))) (throw (ex-info "translate requires vec3" options)))
+    :scale (when-not (= 3 (count (:factors options))) (throw (ex-info "scale requires vec3" options)))
+    :weld (when-not (pos? (:tolerance options 0)) (throw (ex-info "weld requires positive tolerance" options)))
+    :solidify (when-not (number? (:thickness options)) (throw (ex-info "solidify requires thickness" options)))
+    :planar-unwrap (when-not (#{:x :y :z} (:axis options)) (throw (ex-info "unwrap requires axis" options)))
+    nil)
+  true)
+
 (defn apply-modifier [m {:modifier/keys [kind options enabled?]}]
   (if (false? enabled?) m
+    (do
+      (validate-modifier {:modifier/kind kind :modifier/options options})
     (case kind
       :mirror (mirror-mesh m (:axis options :x))
       :subdivision (nth (iterate subdivide-mesh m) (:levels options 1))
       :array (array-mesh m (:count options 2) (:offset options [2.5 0 0]))
-      m)))
+      :translate (translate-vertices m (range (count (:mesh/vertices m))) (:offset options))
+      :scale (scale-mesh m (:factors options))
+      :triangulate (triangulate-mesh m)
+      :flip-normals (flip-faces m (range (count (:mesh/faces m))))
+      :weld (weld-mesh m (:tolerance options))
+      :solidify (solidify-mesh m (:thickness options))
+      :planar-unwrap (planar-unwrap m (:axis options))))))
 (defn evaluated-object-mesh [o] (reduce apply-modifier (:object/mesh o) (:object/modifiers o)))
 
 (defn scene-mesh

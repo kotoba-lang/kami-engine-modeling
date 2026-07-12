@@ -194,6 +194,28 @@
     (is (= 24 (count (:mesh/vertices (m/array-mesh cube 3 [2 0 0])))))
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (m/array-mesh cube 0 [1 0 0])))))
 
+(deftest production-modifier-registry-and-evaluation
+  (let [quad (m/quad 2 2)
+        duplicate (m/mesh [[0 0 0] [1 0 0] [1 1 0] [0 1 0] [0.00001 0 0]] [[4 1 2 3]])
+        mods [(m/modifier :translate {:offset [1 2 3]})
+              (m/modifier :scale {:factors [2 1 1]})
+              (m/modifier :triangulate {})
+              (m/modifier :flip-normals {})]
+        evaluated (reduce m/apply-modifier quad mods)
+        welded (m/apply-modifier duplicate (m/modifier :weld {:tolerance 0.001}))
+        solid (m/apply-modifier quad (m/modifier :solidify {:thickness 0.2}))
+        unwrapped (m/apply-modifier quad (m/modifier :planar-unwrap {:axis :z}))]
+    (is (= 10 (count m/modifier-registry)))
+    (is (= 2 (count (:mesh/faces evaluated))))
+    (is (= [0.0 1.0 3.0] (first (:mesh/vertices evaluated))))
+    (is (= 4 (count (:mesh/vertices welded))))
+    (is (= 8 (count (:mesh/vertices solid))))
+    (is (= 6 (count (:mesh/faces solid))))
+    (is (= 4 (count (:mesh/uvs unwrapped))))
+    (is (every? m/valid-mesh? [evaluated welded solid unwrapped]))
+    (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"unknown modifier"
+                          (m/apply-modifier quad (m/modifier :unknown {}))))))
+
 (deftest portable-pbr-materials
   (let [base (m/scene [(m/object 1 "Cube" (m/cube 2))])
         material {:material/base-color [0.8 0.2 0.1 1.0]
