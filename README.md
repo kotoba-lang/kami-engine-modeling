@@ -26,6 +26,11 @@ mate solving, DOF and over-constraint diagnostics, and AABB interference
 depth/volume. Rotational, gear and full kinematic solving remain explicit
 unsolved constraints until their production solvers land.
 
+`kami.modeling.drawing` adds model-revision-associated sheets, orthographic box
+views, semantic dimensions, stale/orphan diagnostics, assembly BOM generation,
+ISO/ASME-oriented paper/projection settings and deterministic vector SVG output.
+Section/detail views, hidden-line removal, GD&T and DXF/PDF remain subsequent gates.
+
 `kami.modeling.document` is the first shared CAD foundation: a versioned
 immutable document graph with stable UUID nodes, explicit units and modeling
 tolerance, deterministic revision IDs, projection provenance/staleness checks,
@@ -33,4 +38,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 35 tests / 189 assertions).
+Run `clojure -M:test` (currently 37 tests / 198 assertions).
