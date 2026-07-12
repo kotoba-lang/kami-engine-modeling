@@ -35,6 +35,31 @@
                                  p mins sizes)) projected)]
     (assoc m :mesh/uvs uvs)))
 
+(defn transform-uvs
+  "Transform selected per-vertex UVs around their selection centroid.
+  Options: `:offset [u v]`, `:scale [su sv]`, and `:rotation` radians."
+  [m vertex-indices {:keys [offset scale rotation]
+                     :or {offset [0 0] scale [1 1] rotation 0}}]
+  (let [uvs (:mesh/uvs m) ids (set vertex-indices)]
+    (when-not (= (count uvs) (count (:mesh/vertices m)))
+      (throw (ex-info "UV transform requires complete per-vertex UVs" {})))
+    (when (empty? ids) (throw (ex-info "at least one UV must be selected" {})))
+    (when-not (every? #(< -1 % (count uvs)) ids)
+      (throw (ex-info "UV vertex index out of bounds" {:indices ids :uv-count (count uvs)})))
+    (when-not (and (= 2 (count offset)) (= 2 (count scale)) (every? number? (concat offset scale [rotation]))
+                   (every? pos? scale))
+      (throw (ex-info "invalid UV transform" {:offset offset :scale scale :rotation rotation})))
+    (let [selected (map #(nth uvs %) ids) n (count selected)
+          pivot (mapv #(/ % n) (reduce #(mapv + %1 %2) [0 0] selected))
+          c (#?(:clj Math/cos :cljs js/Math.cos) rotation)
+          s (#?(:clj Math/sin :cljs js/Math.sin) rotation)
+          transform (fn [[u v]]
+                      (let [x (* (first scale) (- u (first pivot)))
+                            y (* (second scale) (- v (second pivot)))]
+                        [(+ (first pivot) (first offset) (- (* c x) (* s y)))
+                         (+ (second pivot) (second offset) (* s x) (* c y))]))]
+      (assoc m :mesh/uvs (mapv (fn [index uv] (if (ids index) (transform uv) uv)) (range) uvs)))))
+
 (defn quad
   "A counter-clockwise quad in the XY plane."
   [width height]

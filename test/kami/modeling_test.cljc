@@ -212,3 +212,14 @@
     (is (false? (m/valid-mesh? (assoc unwrapped :mesh/uvs [[0 0]]))))
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
                  (m/planar-unwrap (m/cube 1) :invalid)))))
+
+(deftest selected-uv-transform-supports-offset-scale-and-rotation
+  (let [base (m/planar-unwrap (m/quad 2 2) :z)
+        moved (m/transform-uvs base [0 1] {:offset [0.25 -0.1] :scale [2 1] :rotation 0})
+        rotated (m/transform-uvs base [0 1 2 3] {:rotation (/ #?(:clj Math/PI :cljs js/Math.PI) 2)})]
+    (is (= [[-0.25 -0.1] [1.75 -0.1]] (subvec (:mesh/uvs moved) 0 2)))
+    (is (= [1.0 0.0] (mapv #(double (#?(:clj Math/round :cljs js/Math.round) %)) (first (:mesh/uvs rotated)))))
+    (is (= (subvec (:mesh/uvs base) 2) (subvec (:mesh/uvs moved) 2)))
+    (is (m/valid-mesh? moved))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/transform-uvs (m/cube 1) [0] {})))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/transform-uvs base [0] {:scale [0 1]})))))
