@@ -12,13 +12,19 @@ This repository is the tessellated mesh layer of the wider exact-CAD plan.
 evaluation and provenance-carrying surface tessellation. `kami.modeling.brep`
 adds stable vertex/edge/coedge/loop/face/shell/body topology, analytic surfaces,
 closed-manifold validation and B-rep face provenance on derived meshes. It does
-not yet claim a complete feature kernel, assembly, manufacturing drawing or
-qualified CAE support. `kami.modeling.step` implements a fail-closed ISO
+not yet claim a complete feature kernel or production assembly, manufacturing
+drawing or qualified CAE support. `kami.modeling.step` implements a fail-closed ISO
 10303-21/AP242 geometric subset for planar, line-edged closed B-rep topology;
 it is explicitly not full AP242 conformance. The shared document graph, adapter
 boundaries and 1/5–5/5 gates
 are defined in
 [`kami-engine` ADR-0049](../kami-engine/90-docs/adr/0049-kotoba-3d-suite-commercial-cad-maturity.md).
+
+`kami.modeling.assembly` provides immutable part definitions and occurrences,
+configurations/suppression, grounded state, deterministic coincident/distance
+mate solving, DOF and over-constraint diagnostics, and AABB interference
+depth/volume. Rotational, gear and full kinematic solving remain explicit
+unsolved constraints until their production solvers land.
 
 `kami.modeling.document` is the first shared CAD foundation: a versioned
 immutable document graph with stable UUID nodes, explicit units and modeling
@@ -27,4 +33,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 32 tests / 177 assertions).
+Run `clojure -M:test` (currently 35 tests / 189 assertions).
