@@ -96,3 +96,37 @@
     (is (string/includes? pdf "POSITION 0.1 | A | B"))
     (is (thrown? #?(:clj Exception :cljs js/Error)
                  (drawing/feature-control-frame :unknown 0.1 ["A"])))))
+
+(deftest iso-asme-auxiliary-exploded-and-balloon-consistency
+  (let [part-a (assembly/part (uid "explode/part-a") "r1" "Plate" {:min [0 0 0] :max [2 1 1]})
+        part-b (assembly/part (uid "explode/part-b") "r2" "Pin" {:min [0 0 0] :max [1 1 2]})
+        occ-a (assembly/occurrence (uid "explode/occ-a") (:part/id part-a))
+        occ-b (assembly/occurrence (uid "explode/occ-b") (:part/id part-b))
+        model (assembly/assembly (uid "explode/assembly") [part-a part-b] [occ-a occ-b] [] {:default {}})
+        base (drawing/view (uid "explode/base") :front
+                           (drawing/box-view-geometry (:part/bounds part-a) :front) {})
+        auxiliary (drawing/auxiliary-view (uid "explode/aux") (:view/id base) [1 1 0]
+                                          (drawing/box-view-geometry (:part/bounds part-a) :front)
+                                          {:origin [60 20] :label "AUX A"})
+        geometries {(:occurrence/id occ-a) (drawing/box-view-geometry (:part/bounds part-a) :front)
+                    (:occurrence/id occ-b) (drawing/box-view-geometry (:part/bounds part-b) :front)}
+        exploded (drawing/exploded-view (uid "explode/view") :front geometries
+                                        {(:occurrence/id occ-a) [0 0 0] (:occurrence/id occ-b) [10 5 0]}
+                                        {:origin [100 20]})
+        balloon (drawing/annotation (uid "explode/balloon") (:view/id exploded) :balloon [110 25]
+                                    {:text "2" :bom/part (:part/id part-b)})
+        sheet (-> (drawing/sheet (uid "explode/sheet") "r1" {:template :asme-b})
+                  (drawing/add-view base) (drawing/add-view auxiliary) (drawing/add-view exploded)
+                  (drawing/add-annotation balloon) (drawing/with-bom model))]
+    (is (= [:asme :ANSI-B :third-angle :in]
+           ((juxt :drawing/standard :drawing/paper :drawing/projection :drawing/units) sheet)))
+    (is (= :auxiliary (:view/kind auxiliary)))
+    (is (= [1.0 1.0 0.0] (:view/projection-normal auxiliary)))
+    (is (= :exploded (:view/kind exploded)))
+    (is (some #{[10 5]} (get-in exploded [:view/geometry :points])))
+    (is (drawing/valid-sheet? sheet))
+    (is (= :dangling-balloon-bom-part
+           (:error (first (drawing/validation-errors
+                           (assoc-in sheet [:drawing/annotations 0 :annotation/data :bom/part]
+                                     (uid "missing-part")))))))
+    (is (= :iso (:drawing/standard (drawing/sheet (uid "iso") "r1" {:template :iso-a3}))))))

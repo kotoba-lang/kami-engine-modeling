@@ -10,15 +10,28 @@
 (def gdt-symbols #{:straightness :flatness :circularity :cylindricity :profile-line :profile-surface
                     :parallelism :perpendicularity :angularity :position :concentricity
                     :symmetry :circular-runout :total-runout})
+(def drawing-standards #{:iso :asme})
+(def templates
+  {:iso-a4 {:template/standard :iso :template/paper :A4 :template/projection :first-angle :template/units :mm}
+   :iso-a3 {:template/standard :iso :template/paper :A3 :template/projection :first-angle :template/units :mm}
+   :asme-a {:template/standard :asme :template/paper :ANSI-A :template/projection :third-angle :template/units :in}
+   :asme-b {:template/standard :asme :template/paper :ANSI-B :template/projection :third-angle :template/units :in}})
 
-(defn sheet [id model-revision {:keys [paper projection units title]
-                                :or {paper :A4 projection :first-angle units :mm title "Drawing"}}]
+(defn sheet [id model-revision {:keys [paper projection units title standard template]
+                                :or {paper :A4 projection :first-angle units :mm title "Drawing" standard :iso}}]
+  (let [template-data (get templates template)
+        paper (or (:template/paper template-data) paper)
+        projection (or (:template/projection template-data) projection)
+        units (or (:template/units template-data) units)
+        standard (or (:template/standard template-data) standard)]
   (when-not (and (uuid? id) (string? model-revision) (paper-sizes paper)
-                 (projection-methods projection) (document/supported-units units))
+                 (projection-methods projection) (document/supported-units units)
+                 (drawing-standards standard))
     (throw (ex-info "invalid drawing sheet" {:id id :paper paper :projection projection})))
   {:drawing/id id :drawing/model-revision model-revision :drawing/paper paper
-   :drawing/projection projection :drawing/units units :drawing/title title
-   :drawing/views [] :drawing/dimensions [] :drawing/annotations [] :drawing/bom []})
+   :drawing/projection projection :drawing/units units :drawing/title title :drawing/standard standard
+   :drawing/template template
+   :drawing/views [] :drawing/dimensions [] :drawing/annotations [] :drawing/bom []}))
 
 (defn view [id direction geometry {:keys [origin scale hidden-lines?]
                                    :or {origin [20 20] scale 1 hidden-lines? true}}]
@@ -75,6 +88,34 @@
          :view/kind :detail :view/source source-view-id :view/detail-center center
          :view/detail-radius radius :view/label (:label options "A")))
 
+(defn auxiliary-view [id source-view-id projection-normal geometry options]
+  (when-not (and (uuid? source-view-id) (= 3 (count projection-normal))
+                 (every? number? projection-normal) (some #(not (zero? %)) projection-normal))
+    (throw (ex-info "invalid auxiliary projection normal" {:source-view source-view-id})))
+  (assoc (view id (:direction options :front) geometry options)
+         :view/kind :auxiliary :view/source source-view-id
+         :view/projection-normal (mapv double projection-normal)
+         :view/label (:label options "AUX")))
+
+(defn exploded-view [id direction occurrence-geometry explosion-vectors options]
+  (when-not (and (map? occurrence-geometry) (seq occurrence-geometry)
+                 (= (set (keys occurrence-geometry)) (set (keys explosion-vectors)))
+                 (every? uuid? (keys occurrence-geometry))
+                 (every? #(and (= 3 (count %)) (every? number? %)) (vals explosion-vectors)))
+    (throw (ex-info "invalid exploded occurrence geometry" {})))
+  (let [ids (sort-by str (keys occurrence-geometry))
+        geometries (mapv occurrence-geometry ids)
+        points (vec (mapcat (fn [occurrence-id geometry]
+                              (let [[dx dy _] (get explosion-vectors occurrence-id)]
+                                (map (fn [[x y]] [(+ x dx) (+ y dy)]) (:points geometry)))) ids geometries))
+        offsets (reductions + 0 (map #(count (:points %)) geometries))
+        edges (vec (mapcat (fn [offset geometry]
+                             (mapv #(mapv (partial + offset) %) (:edges geometry)))
+                           offsets geometries))]
+    (assoc (view id direction {:points points :edges edges} options)
+           :view/kind :exploded :view/occurrences (vec ids)
+           :view/explosion-vectors explosion-vectors)))
+
 (defn feature-control-frame [symbol tolerance datums]
   (when-not (and (gdt-symbols symbol) (number? tolerance) (pos? tolerance)
                  (<= (count datums) 3) (every? #(and (string? %) (re-matches #"[A-Z]+" %)) datums))
@@ -102,6 +143,23 @@
 
 (defn with-bom [sheet assembly]
   (assoc sheet :drawing/bom (bill-of-materials (:assembly/occurrences assembly) (:assembly/parts assembly))))
+
+(defn validation-errors [sheet]
+  (let [view-ids (set (map :view/id (:drawing/views sheet)))
+        bom-parts (set (map :bom/part (:drawing/bom sheet)))]
+    (vec
+     (concat
+      (for [dimension (:drawing/dimensions sheet) :when (not (view-ids (:dimension/view dimension)))]
+        {:error :missing-dimension-view :dimension (:dimension/id dimension)})
+      (for [annotation (:drawing/annotations sheet) :when (not (view-ids (:annotation/view annotation)))]
+        {:error :missing-annotation-view :annotation (:annotation/id annotation)})
+      (for [annotation (:drawing/annotations sheet)
+            :when (and (= :balloon (:annotation/kind annotation))
+                       (not (bom-parts (get-in annotation [:annotation/data :bom/part]))))]
+        {:error :dangling-balloon-bom-part :annotation (:annotation/id annotation)
+         :part (get-in annotation [:annotation/data :bom/part])})))))
+
+(defn valid-sheet? [sheet] (empty? (validation-errors sheet)))
 
 (defn current? [sheet document]
   (= (:drawing/model-revision sheet) (:document/revision document)))
