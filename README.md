@@ -7,8 +7,10 @@ BSP Boolean operations, normals/UVs/material data, and non-destructive mirror,
 array and subdivision modifiers. `kami-app-modeler` owns interaction,
 selection, gizmos, history UI and interchange workflows.
 
-This repository is the tessellated mesh layer of the wider exact-CAD plan. It
-does not claim NURBS/B-rep, STEP, assembly, manufacturing drawing or qualified
+This repository is the tessellated mesh layer of the wider exact-CAD plan.
+`kami.modeling.nurbs` now provides validated rational NURBS curve/surface
+evaluation and provenance-carrying surface tessellation. It does not yet claim
+a complete B-rep kernel, STEP, assembly, manufacturing drawing or qualified
 CAE support. Their shared document graph, adapter boundaries and 1/5–5/5 gates
 are defined in
 [`kami-engine` ADR-0049](../kami-engine/90-docs/adr/0049-kotoba-3d-suite-commercial-cad-maturity.md).
@@ -20,4 +22,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 24 tests / 139 assertions).
+Run `clojure -M:test` (currently 27 tests / 152 assertions).
