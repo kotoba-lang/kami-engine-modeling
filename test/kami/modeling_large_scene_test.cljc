@@ -67,3 +67,26 @@
     (is (= (:instance/id (first resident))
            (:instance/id (first (large/materialize-chunks manifest resident-ids))))
         "materialized chunk identities are deterministic")))
+
+(deftest named-device-webgpu-webgl2-performance-and-provenance-gate
+  (let [metrics {:first-useful-frame-ms 1800 :p95-frame-ms 28 :max-main-thread-stall-ms 70
+                 :cpu-memory-bytes 400000000 :gpu-memory-bytes 300000000
+                 :visible-occurrences 20000 :resident-triangles 11200000
+                 :picking-ids [101 102 103] :provenance-revision "k1-scene"}
+        webgpu (large/device-report "reference-laptop-2026" :webgpu metrics)
+        webgl2 (large/device-report "reference-laptop-2026" :webgl2
+                                    (assoc metrics :p95-frame-ms 31 :gpu-memory-bytes 320000000))
+        limits {:max-first-frame-ms 3000 :max-p95-frame-ms (/ 1000.0 30)
+                :max-stall-ms 100 :max-cpu-memory-bytes 536870912 :max-gpu-memory-bytes 536870912
+                :min-visible-occurrences 10000 :min-resident-triangles 10000000}
+        passed (large/performance-gate [webgpu webgl2] limits)
+        parity-failure (large/performance-gate
+                        [webgpu (assoc webgl2 :report/picking-ids [101 999 103])] limits)]
+    (is (:gate/pass? passed))
+    (is (= ["reference-laptop-2026"] (:gate/devices passed)))
+    (is (false? (:gate/pass? (large/performance-gate [webgpu] limits))))
+    (is (= :missing-backend (get-in (large/performance-gate [webgpu] limits)
+                                        [:gate/violations 0 :error])))
+    (is (= :picking-parity (get-in parity-failure [:gate/violations 0 :error])))
+    (is (thrown? #?(:clj Exception :cljs js/Error)
+                 (large/device-report "unnamed" :webgpu (dissoc metrics :gpu-memory-bytes))))))

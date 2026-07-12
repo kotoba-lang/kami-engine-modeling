@@ -103,7 +103,11 @@ gate covers 10,000 instances collapsed to one shared upload and instanced draw.
 An out-of-core procedural manifest gate represents 1,000,000 occurrences and
 600,000,000 triangles as 100 deterministic chunks, materializing only a
 20,000-occurrence / 12,000,000-triangle resident window with stable IDs.
-Named-device p95 frame-time and bounded-memory browser gates remain outstanding.
+Named-device reports now enforce first-useful-frame, p95 frame time, main-thread
+stall, CPU/GPU memory, visible-occurrence and resident-triangle budgets. A
+device passes only when both WebGPU and WebGL2 reports preserve identical
+picking IDs and document provenance. Checked synthetic contract reports verify
+the gate logic; real reference-device WebGL2 measurements remain outstanding.
 
 `kami.modeling.collaboration` adds actor/logical-time/parent/precondition
 operations, deterministic replay, offline branches, semantic-path merge,
@@ -125,4 +129,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 79 tests / 617 assertions).
+Run `clojure -M:test` (currently 80 tests / 623 assertions).

@@ -151,3 +151,67 @@
      :scene/resident-occurrences occurrences
      :scene/resident-triangles (* occurrences (:manifest/triangles-per-instance manifest))
      :scene/resident-chunks (count resident)}))
+
+(defn device-report
+  [device backend {:keys [first-useful-frame-ms p95-frame-ms max-main-thread-stall-ms
+                          cpu-memory-bytes gpu-memory-bytes visible-occurrences resident-triangles
+                          picking-ids provenance-revision]}]
+  (when-not (and (string? device) (seq device) (#{:webgpu :webgl2} backend)
+                 (every? #(and (number? %) (not (neg? %)))
+                         [first-useful-frame-ms p95-frame-ms max-main-thread-stall-ms
+                          cpu-memory-bytes gpu-memory-bytes])
+                 (every? pos-int? [visible-occurrences resident-triangles])
+                 (vector? picking-ids) (every? integer? picking-ids)
+                 (= (count picking-ids) (count (distinct picking-ids)))
+                 (string? provenance-revision) (seq provenance-revision))
+    (throw (ex-info "invalid named-device performance report" {:device device :backend backend})))
+  {:report/device device :report/backend backend
+   :report/first-useful-frame-ms first-useful-frame-ms :report/p95-frame-ms p95-frame-ms
+   :report/max-main-thread-stall-ms max-main-thread-stall-ms
+   :report/cpu-memory-bytes cpu-memory-bytes :report/gpu-memory-bytes gpu-memory-bytes
+   :report/visible-occurrences visible-occurrences :report/resident-triangles resident-triangles
+   :report/picking-ids picking-ids :report/provenance-revision provenance-revision})
+
+(defn performance-gate
+  "Evaluate the ADR named-device matrix. Each device must report both backends;
+  backend picking IDs and source provenance must be identical."
+  [reports {:keys [max-first-frame-ms max-p95-frame-ms max-stall-ms max-cpu-memory-bytes
+                   max-gpu-memory-bytes min-visible-occurrences min-resident-triangles]}]
+  (let [by-device (group-by :report/device reports)
+        violations
+        (vec
+         (concat
+          (for [[device rs] by-device
+                :when (not= #{:webgpu :webgl2} (set (map :report/backend rs)))]
+            {:error :missing-backend :device device})
+          (mapcat
+           (fn [[device rs]]
+             (let [by-backend (into {} (map (juxt :report/backend identity) rs))
+                   webgpu (:webgpu by-backend) webgl2 (:webgl2 by-backend)]
+               (concat
+                (when (and webgpu webgl2
+                           (not= (:report/picking-ids webgpu) (:report/picking-ids webgl2)))
+                  [{:error :picking-parity :device device}])
+                (when (and webgpu webgl2
+                           (not= (:report/provenance-revision webgpu) (:report/provenance-revision webgl2)))
+                  [{:error :provenance-parity :device device}])
+                (mapcat
+                 (fn [r]
+                   (keep identity
+                         [(when (> (:report/first-useful-frame-ms r) max-first-frame-ms)
+                            {:error :first-frame-budget :device device :backend (:report/backend r)})
+                          (when (> (:report/p95-frame-ms r) max-p95-frame-ms)
+                            {:error :frame-time-budget :device device :backend (:report/backend r)})
+                          (when (> (:report/max-main-thread-stall-ms r) max-stall-ms)
+                            {:error :main-thread-stall-budget :device device :backend (:report/backend r)})
+                          (when (> (:report/cpu-memory-bytes r) max-cpu-memory-bytes)
+                            {:error :cpu-memory-budget :device device :backend (:report/backend r)})
+                          (when (> (:report/gpu-memory-bytes r) max-gpu-memory-bytes)
+                            {:error :gpu-memory-budget :device device :backend (:report/backend r)})
+                          (when (< (:report/visible-occurrences r) min-visible-occurrences)
+                            {:error :visible-occurrence-floor :device device :backend (:report/backend r)})
+                          (when (< (:report/resident-triangles r) min-resident-triangles)
+                            {:error :resident-triangle-floor :device device :backend (:report/backend r)})])) rs))))
+           by-device)))]
+    {:gate/pass? (and (seq reports) (empty? violations)) :gate/devices (vec (sort (keys by-device)))
+     :gate/reports (count reports) :gate/violations violations}))
