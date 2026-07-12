@@ -63,3 +63,47 @@
     (is (= 10000 (count (:history/operations history))))
     (is (contains? (:history/snapshots checkpointed) (get-in history [:history/head :document/revision])))
     (is (:audit/replay-valid? (collaboration/audit history)))))
+
+(deftest authorization-signature-and-tamper-rejection
+  (let [base (base-document) a (uid "a") actor "did:plc:editor"
+        policy (collaboration/access-policy (:document/id base) {actor :editor "did:plc:reader" :viewer})
+        secret {actor "test-secret"}
+        signer (fn [did payload] (str (hash (str (get secret did) "|" payload))))
+        verifier (fn [did payload signature] (= signature (signer did payload)))
+        op (-> (collaboration/operation (uid "signed-op") actor 1 (:document/revision base)
+                                        :assoc [:document/nodes a :value] 9 1)
+               (collaboration/sign-operation signer))
+        accepted (collaboration/append-signed-operation (collaboration/history base) policy op verifier)]
+    (is (collaboration/authorized? policy actor :assoc))
+    (is (not (collaboration/authorized? policy "did:plc:reader" :assoc)))
+    (is (= 9 (get-in accepted [:history/head :document/nodes a :value])))
+    (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"signature verification failed"
+                          (collaboration/append-signed-operation (collaboration/history base) policy
+                                                                 (assoc op :operation/value 10) verifier)))
+    (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"not authorized"
+                          (collaboration/append-signed-operation (collaboration/history base) policy
+                                                                 (assoc op :operation/actor "did:plc:reader") verifier)))))
+
+(deftest offline-replicas-converge-or-expose-divergence-without-loss
+  (let [base (base-document) a-id (uid "a") b-id (uid "b")
+        op-a (collaboration/operation (uid "sync/a") "did:plc:a" 1 (:document/revision base)
+                                      :assoc [:document/nodes a-id :value] 3 1)
+        op-b (collaboration/operation (uid "sync/b") "did:plc:b" 1 (:document/revision base)
+                                      :assoc [:document/nodes b-id :value] 4 2)
+        ra (collaboration/replica (uid "replica/a")
+                                  (collaboration/append-operation (collaboration/history base) op-a))
+        rb (collaboration/replica (uid "replica/b")
+                                  (collaboration/append-operation (collaboration/history base) op-b))
+        [synced-a synced-b] (collaboration/sync-replicas ra rb)]
+    (is (= :diverged (get-in synced-a [:replica/sync :sync/status])))
+    (is (= 2 (count (get-in synced-a [:replica/sync :sync/tips])))
+        "both offline heads survive for semantic merge")
+    (is (= (:replica/known-operations synced-a) (:replica/known-operations synced-b)))
+    (is (= 2 (count (:replica/known-operations synced-a))))))
+
+(deftest presence-is-explicitly-ephemeral
+  (let [history (collaboration/history (base-document))
+        presence (collaboration/presence (uid "presence-replica") "did:plc:user" [10 20] [(uid "a")] 42)]
+    (is (:presence/ephemeral? presence))
+    (is (collaboration/canonical-history? history))
+    (is (false? (collaboration/canonical-history? (assoc history :history/presence [presence]))))))

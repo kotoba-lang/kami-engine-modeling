@@ -102,3 +102,81 @@
    :audit/head (get-in history [:history/head :document/revision])
    :audit/replay-valid? (= (:history/head history)
                            (replay (:history/base history) (:history/operations history)))})
+
+(def permissions
+  {:viewer #{} :commenter #{:comment} :editor #{:assoc :dissoc :comment}
+   :reviewer #{:assoc :dissoc :comment :merge :release} :owner #{:assoc :dissoc :comment :merge :release :admin}})
+
+(defn access-policy [document-id members]
+  (when-not (and (uuid? document-id) (map? members)
+                 (every? string? (keys members)) (every? permissions (vals members)))
+    (throw (ex-info "invalid collaboration access policy" {})))
+  {:policy/document document-id :policy/members members})
+
+(defn authorized? [policy actor command]
+  (contains? (get permissions (get-in policy [:policy/members actor]) #{}) command))
+
+(defn operation-payload [op]
+  ;; Stable canonical payload; signature bytes/strings are deliberately outside it.
+  (pr-str (document/canonical-form (dissoc op :operation/signature))))
+
+(defn sign-operation [op signer]
+  (when-not (ifn? signer) (throw (ex-info "signature adapter must be callable" {})))
+  (let [signature (signer (:operation/actor op) (operation-payload op))]
+    (when-not (and (string? signature) (seq signature))
+      (throw (ex-info "signature adapter returned invalid signature" {})))
+    (assoc op :operation/signature signature)))
+
+(defn verify-operation [op verifier]
+  (and (string? (:operation/signature op))
+       (boolean (verifier (:operation/actor op) (operation-payload op) (:operation/signature op)))))
+
+(defn append-signed-operation [history policy op verifier]
+  (when-not (authorized? policy (:operation/actor op) (:operation/command op))
+    (throw (ex-info "operation is not authorized" {:actor (:operation/actor op)
+                                                     :command (:operation/command op)})))
+  (when-not (verify-operation op verifier)
+    (throw (ex-info "operation signature verification failed" {:operation (:operation/id op)})))
+  (append-operation history op))
+
+(defn replica [id history]
+  (when-not (uuid? id) (throw (ex-info "replica id must be UUID" {})))
+  {:replica/id id :replica/history history :replica/known-operations
+   (set (map :operation/id (:history/operations history)))})
+
+(defn sync-replicas
+  "Deterministically exchange operation sets. Linear operations replay when
+  their parents are present; divergent heads are preserved as explicit
+  branches for semantic merge instead of last-writer-wins data loss."
+  [a b]
+  (let [all-ops (->> (concat (get-in a [:replica/history :history/operations])
+                             (get-in b [:replica/history :history/operations]))
+                     (reduce (fn [m op] (assoc m (:operation/id op) op)) {}) vals
+                     (sort-by (juxt :operation/logical-time :operation/actor (comp str :operation/id))))
+        base (get-in a [:replica/history :history/base])]
+    (when-not (= (:document/revision base) (get-in b [:replica/history :history/base :document/revision]))
+      (throw (ex-info "replicas do not share a base" {})))
+    (loop [heads {(:document/revision base) base} pending (vec all-ops) applied []]
+      (let [[heads' pending' applied' progressed?]
+            (reduce (fn [[hs wait done progressed] op]
+                      (if-let [parent (get hs (:operation/parent op))]
+                        (let [next (apply-operation parent op)]
+                          [(assoc hs (:document/revision next) next) wait (conj done op) true])
+                        [hs (conj wait op) done progressed]))
+                    [heads [] applied false] pending)]
+        (if progressed? (recur heads' pending' applied')
+          (let [child-parents (set (map :operation/parent applied'))
+                tips (into {} (remove (comp child-parents key) heads'))
+                result {:sync/status (cond (seq pending') :missing-parent (> (count tips) 1) :diverged :else :converged)
+                        :sync/tips tips :sync/applied applied' :sync/pending pending'}]
+            [(assoc a :replica/known-operations (set (map :operation/id applied')) :replica/sync result)
+             (assoc b :replica/known-operations (set (map :operation/id applied')) :replica/sync result)]))))))
+
+(defn presence [replica-id actor cursor selection timestamp]
+  {:presence/replica replica-id :presence/actor actor :presence/cursor cursor
+   :presence/selection selection :presence/timestamp timestamp :presence/ephemeral? true})
+
+(defn canonical-history? [x]
+  ;; Presence must never enter revisions, operations or snapshots.
+  (and (nil? (:history/presence x))
+       (not-any? #(contains? % :presence/ephemeral?) (:history/operations x))))

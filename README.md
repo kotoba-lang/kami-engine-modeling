@@ -61,7 +61,9 @@ browser/device p95 and 100-million-triangle streaming gates remain outstanding.
 operations, deterministic replay, offline branches, semantic-path merge,
 explainable conflicts, selective inverse operations, checkpoints and audit.
 The gate covers 10,000 operations without requiring full-log replay after a
-checkpoint. Authorization, signatures, network transport and ephemeral presence
+checkpoint. It also provides role-based authorization, injected signature/
+verification adapters, tamper rejection, offline replica synchronization and
+strictly ephemeral presence. Production key management and network transport
 remain integration gates.
 
 `kami.modeling.document` is the first shared CAD foundation: a versioned
@@ -71,4 +73,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 56 tests / 483 assertions).
+Run `clojure -M:test` (currently 59 tests / 495 assertions).
