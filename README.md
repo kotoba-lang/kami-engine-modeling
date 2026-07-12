@@ -101,6 +101,9 @@ when a qualified CUDA backend is injected.
 The pinned `num` revision in turn pins `kotoba-lang/compiler`: CUDA and WGSL
 elementwise/reduction kernels now carry shared typed accelerator-KIR identity,
 target-specific code hashes and bounded resource metadata in backend provenance.
+On NVIDIA hosts those verified CUDA sources are compiled by NVRTC and launched
+through cached CUDA Driver API functions; the native compiled-driver contract
+requires zero bootstrap elementwise/reduction calls.
 
 `kami.modeling.feature-graph` generalizes the linear modifier stack into a typed
 dependency DAG with cycle/type diagnostics, deterministic cache keys, partial
