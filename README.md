@@ -12,10 +12,12 @@ This repository is the tessellated mesh layer of the wider exact-CAD plan.
 evaluation, outer/inner UV trimming and provenance-carrying surface
 tessellation. `kami.modeling.brep`
 adds stable vertex/edge/coedge/loop/face/shell/body topology, analytic surfaces,
-closed-manifold validation and B-rep face provenance on derived meshes. It does
+closed-manifold validation, tolerance diagnostics/healing and B-rep face
+provenance on derived meshes. Near-duplicate vertices are rewired explicitly;
+degenerate results fail with diagnostics. It does
 not yet claim a complete feature kernel or production assembly, manufacturing
 drawing or qualified CAE support. `kami.modeling.step` implements a fail-closed ISO
-10303-21/AP242 geometric subset for planar, line-edged closed B-rep topology;
+10303-21 AP203/AP214/AP242-profile geometric subset for planar, line-edged closed B-rep topology;
 its deterministic internal gate round-trips 100 generated closed bodies. This
 is explicitly not an external interoperability corpus or full AP242
 conformance. The shared document graph, adapter
@@ -73,4 +75,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 59 tests / 495 assertions).
+Run `clojure -M:test` (currently 61 tests / 508 assertions).

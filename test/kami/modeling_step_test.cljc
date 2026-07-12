@@ -30,3 +30,13 @@
       (is (brep/valid-body? decoded) (str "valid topology for corpus item " i))
       (is (= [8 12 6] [(count (:brep/vertices decoded)) (count (:brep/edges decoded))
                        (count (:brep/faces decoded))]) (str "entity counts for corpus item " i)))))
+
+(deftest ap203-ap214-ap242-profile-compatibility
+  (doseq [[profile schema-name] step/schemas]
+    (let [source (brep/box-body (str "step/profile/" (name profile)) 1 2 3 1.0e-6)
+          encoded (step/export-body source {:profile profile})
+          decoded (step/import-body encoded)]
+      (is (string/includes? encoded (str "FILE_SCHEMA(('" schema-name "'))")))
+      (is (brep/valid-body? decoded))))
+  (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"unsupported STEP application profile"
+                        (step/export-body (brep/box-body "bad-profile" 1 1 1 1.0e-6) {:profile :ap999}))))

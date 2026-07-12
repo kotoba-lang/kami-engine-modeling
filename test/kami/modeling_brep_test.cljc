@@ -33,3 +33,25 @@
                (brep/analytic-surface :sphere {:center [0 0 0] :radius 0})))
   (is (thrown? #?(:clj Exception :cljs js/Error)
                (brep/analytic-surface :plane {:origin [0 0 0] :normal [0 0 2]}))))
+
+(deftest tolerance-healing-merges-unused-duplicate-and-rejects-degenerate-edge
+  (let [body (brep/box-body "fixture/heal" 10 10 10 1.0e-6)
+        duplicate-id #uuid "00000000-0000-5000-a000-000000009999"
+        first-vertex (first (vals (:brep/vertices body)))
+        near-point (update (:vertex/point first-vertex) 0 + 1.0e-7)
+        with-unused-duplicate (assoc-in body [:brep/vertices duplicate-id]
+                                        (brep/vertex duplicate-id near-point 1.0e-6))
+        diagnostics (brep/tolerance-diagnostics with-unused-duplicate 1.0e-6)
+        healed (brep/heal-body with-unused-duplicate 1.0e-6)]
+    (is (some #(= :near-duplicate-vertices (:diagnostic %)) diagnostics))
+    (is (= 8 (count (:brep/vertices healed))))
+    (is (= 1 (get-in healed [:brep/healing :merged])))
+    (is (brep/valid-body? healed)))
+  (let [body (brep/box-body "fixture/degenerate-heal" 10 10 10 1.0e-6)
+        edge (first (vals (:brep/edges body)))
+        start-point (get-in body [:brep/vertices (:edge/start edge) :vertex/point])
+        broken (assoc-in body [:brep/vertices (:edge/end edge) :vertex/point]
+                         (update start-point 0 + 1.0e-8))]
+    (is (some #(= :degenerate-edge (:diagnostic %)) (brep/tolerance-diagnostics broken 1.0e-6)))
+    (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"degenerate edges"
+                          (brep/heal-body broken 1.0e-6)))))

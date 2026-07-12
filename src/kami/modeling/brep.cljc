@@ -108,6 +108,47 @@
 
 (defn valid-body? [body] (empty? (validation-errors body)))
 
+(defn- distance [a b]
+  (#?(:clj Math/sqrt :cljs js/Math.sqrt) (reduce + (map (fn [x y] (let [d (- x y)] (* d d))) a b))))
+
+(defn tolerance-diagnostics [body tolerance]
+  (when-not (pos? tolerance) (throw (ex-info "healing tolerance must be positive" {})))
+  (let [vertices (vec (vals (:brep/vertices body)))
+        near (vec (for [i (range (count vertices)) j (range (inc i) (count vertices))
+                        :let [a (nth vertices i) b (nth vertices j) d (distance (:vertex/point a) (:vertex/point b))]
+                        :when (<= d tolerance)]
+                    {:diagnostic :near-duplicate-vertices :keep (:vertex/id a) :merge (:vertex/id b) :distance d}))
+        zero-edges (vec (keep (fn [[id e]]
+                                (let [a (get-in body [:brep/vertices (:edge/start e) :vertex/point])
+                                      b (get-in body [:brep/vertices (:edge/end e) :vertex/point])]
+                                  (when (and a b (<= (distance a b) tolerance))
+                                    {:diagnostic :degenerate-edge :edge id :length (distance a b)})))
+                              (:brep/edges body)))]
+    (into near zero-edges)))
+
+(defn heal-body
+  "Merge near-duplicate vertices and rewire edges. Healing never deletes
+  degenerate edges silently: such a result fails with structured diagnostics."
+  [body tolerance]
+  (let [near (filter #(= :near-duplicate-vertices (:diagnostic %)) (tolerance-diagnostics body tolerance))
+        replacement (reduce (fn [m {:keys [keep merge]}]
+                              (let [canonical (get m keep keep)] (assoc m merge canonical))) {} near)
+        resolve-id (fn resolve-id [id] (if-let [next (get replacement id)]
+                                        (if (= next id) id (resolve-id next)) id))
+        rewritten-edges (into {} (map (fn [[id e]]
+                                        [id (-> e (update :edge/start resolve-id) (update :edge/end resolve-id))])
+                                      (:brep/edges body)))
+        degenerate (vec (for [[id e] rewritten-edges :when (= (:edge/start e) (:edge/end e))]
+                          {:diagnostic :degenerate-edge-after-heal :edge id :vertex (:edge/start e)}))]
+    (when (seq degenerate) (throw (ex-info "B-rep healing produced degenerate edges" {:diagnostics degenerate})))
+    (let [removed (set (keys replacement))
+          healed (assoc body :brep/vertices (apply dissoc (:brep/vertices body) removed)
+                             :brep/edges rewritten-edges
+                             :brep/healing {:tolerance tolerance :merged (count removed)})
+          errors (validation-errors healed)]
+      (when (seq errors) (throw (ex-info "B-rep healing produced invalid topology" {:errors errors})))
+      healed)))
+
 (defn box-body
   "Create a closed analytic six-face B-rep box with stable topology IDs."
   [namespace width depth height tolerance]

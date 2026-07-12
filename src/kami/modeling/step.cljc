@@ -6,14 +6,19 @@
             [kami.modeling.brep :as brep]
             [kami.modeling.document :as document]))
 
-(def schema "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF")
+(def schemas {:ap203 "CONFIG_CONTROL_DESIGN"
+              :ap214 "AUTOMOTIVE_DESIGN_CC2"
+              :ap242 "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF"})
+(def schema (:ap242 schemas))
 
 (defn- esc [s] (string/replace (str s) "'" "''"))
 (defn- step-ref [n] (str "#" n))
 
-(defn export-body [body {:keys [name timestamp] :or {name "Kotoba B-rep" timestamp "1970-01-01T00:00:00"}}]
+(defn export-body [body {:keys [name timestamp profile]
+                         :or {name "Kotoba B-rep" timestamp "1970-01-01T00:00:00" profile :ap242}}]
   (when-not (brep/valid-body? body)
     (throw (ex-info "STEP export requires valid closed B-rep" {:errors (brep/validation-errors body)})))
+  (when-not (schemas profile) (throw (ex-info "unsupported STEP application profile" {:profile profile})))
   (let [counter (atom 0) lines (atom []) ids (atom {})
         emit! (fn [key expression]
                 (let [id (swap! counter inc)] (swap! ids assoc key id) (swap! lines conj (str (step-ref id) "=" expression ";")) id))
@@ -48,7 +53,7 @@
       (emit! [:body (:brep/id body)] (str "MANIFOLD_SOLID_BREP('" (esc name) "'," (step-ref shell-id) ")")))
     (str "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('Kotoba AP242 geometric subset'),'2;1');\n"
          "FILE_NAME('kotoba.step','" (esc timestamp) "',('kotoba'),('kotoba'),'kami-engine-modeling','','');\n"
-         "FILE_SCHEMA(('" schema "'));\nENDSEC;\nDATA;\n" (string/join "\n" @lines)
+         "FILE_SCHEMA(('" (schemas profile) "'));\nENDSEC;\nDATA;\n" (string/join "\n" @lines)
          "\nENDSEC;\nEND-ISO-10303-21;\n")))
 
 (defn- entity-lines [text]
@@ -58,9 +63,10 @@
 (defn- bool-value [s] (if (string/includes? s ".F.") :reversed :forward))
 
 (defn import-body [text]
-  (when-not (and (string/starts-with? text "ISO-10303-21;")
-                 (string/includes? text (str "FILE_SCHEMA(('" schema "'))")))
-    (throw (ex-info "unsupported or malformed STEP header" {:supported-schema schema})))
+  (let [matched-profile (first (keep (fn [[profile schema-name]]
+                                       (when (string/includes? text (str "FILE_SCHEMA(('" schema-name "'))")) profile)) schemas))]
+    (when-not (and (string/starts-with? text "ISO-10303-21;") matched-profile)
+      (throw (ex-info "unsupported or malformed STEP header" {:supported-schemas schemas})))
   (let [entities (entity-lines text)
         kind (fn [expr] (second (re-find #"^([A-Z0-9_]+)\(" expr)))
         unsupported (remove #{"CARTESIAN_POINT" "VERTEX_POINT" "EDGE_CURVE" "ORIENTED_EDGE" "EDGE_LOOP"
@@ -97,4 +103,4 @@
           result (brep/body (uid (str "body/" (first solid))) (vals vs) (vals es) (vals ls) (vals fs) [(get ss shell-ref)])]
       (when-not (brep/valid-body? result)
         (throw (ex-info "imported STEP topology is invalid" {:errors (brep/validation-errors result)})))
-      result)))
+      result))))
