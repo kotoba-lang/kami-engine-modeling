@@ -48,6 +48,13 @@ resident-byte-budget streaming plans and portable stable picking IDs. The data
 gate covers 10,000 instances collapsed to one shared upload and instanced draw;
 browser/device p95 and 100-million-triangle streaming gates remain outstanding.
 
+`kami.modeling.collaboration` adds actor/logical-time/parent/precondition
+operations, deterministic replay, offline branches, semantic-path merge,
+explainable conflicts, selective inverse operations, checkpoints and audit.
+The gate covers 10,000 operations without requiring full-log replay after a
+checkpoint. Authorization, signatures, network transport and ephemeral presence
+remain integration gates.
+
 `kami.modeling.document` is the first shared CAD foundation: a versioned
 immutable document graph with stable UUID nodes, explicit units and modeling
 tolerance, deterministic revision IDs, projection provenance/staleness checks,
@@ -55,4 +62,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 46 tests / 238 assertions).
+Run `clojure -M:test` (currently 50 tests / 255 assertions).
