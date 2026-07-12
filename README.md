@@ -104,6 +104,9 @@ target-specific code hashes and bounded resource metadata in backend provenance.
 On NVIDIA hosts those verified CUDA sources are compiled by NVRTC and launched
 through cached CUDA Driver API functions; the native compiled-driver contract
 requires zero bootstrap elementwise/reduction calls.
+The same compiler identity also emits MSL. `num.metal/MetalBackend` exposes
+native Metal/MPS numerical ports, and compiler-generated add/reduction kernels
+are runtime-compiled and executed successfully on an Apple M1 Max GPU.
 
 `kami.modeling.feature-graph` generalizes the linear modifier stack into a typed
 dependency DAG with cycle/type diagnostics, deterministic cache keys, partial
