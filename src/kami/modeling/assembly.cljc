@@ -170,6 +170,47 @@
                                   (assoc-in o [:occurrence/transform :translation] p) o)])
                           occurrences)))))
 
+(defn solve-closed-loop
+  "Deterministic iterative projection for cyclic coincident/distance point
+  mates. Unlike `solve`, both free endpoints can move, so consistent closed
+  loops converge instead of remaining under-constrained."
+  [assembly tolerance max-iterations]
+  (when-not (and (valid-assembly? assembly) (pos? tolerance) (pos-int? max-iterations))
+    (throw (ex-info "invalid closed-loop solve request" {:errors (validation-errors assembly)})))
+  (let [active (into {} (remove (comp :occurrence/suppressed? val) (:assembly/occurrences assembly)))
+        grounded (set (map key (filter (comp :occurrence/grounded? val) active)))
+        supported (filterv #(#{:coincident :distance} (:mate/kind %))
+                           (sort-by (comp str :mate/id) (vals (:assembly/mates assembly))))
+        unsupported (remove #(#{:coincident :distance} (:mate/kind %))
+                            (vals (:assembly/mates assembly)))
+        initial (into {} (map (fn [[id o]] [id (mapv double (get-in o [:occurrence/transform :translation]))]) active))
+        mate-error (fn [poses m]
+                     (let [a (:mate/a m) b (:mate/b m)
+                           oa (assoc-in (get active a) [:occurrence/transform :translation] (get poses a))
+                           target-b (target-translation oa (get active b) m true)]
+                       (v- target-b (get poses b))))
+        project (fn [poses m]
+                  (let [a (:mate/a m) b (:mate/b m) error (mate-error poses m)
+                        ga (grounded a) gb (grounded b)]
+                    (cond
+                      (and ga gb) poses
+                      ga (update poses b v+ error)
+                      gb (update poses a v- error)
+                      :else (-> poses (update a v- (v* error 0.5))
+                                      (update b v+ (v* error 0.5))))))]
+    (loop [poses initial iteration 0]
+      (let [residuals (mapv (fn [m] {:mate (:mate/id m) :residual (magnitude (mate-error poses m))}) supported)
+            max-residual (apply max 0.0 (map :residual residuals))]
+        (if (or (<= max-residual tolerance) (= iteration max-iterations))
+          (let [conflicts (vec (for [r residuals :when (> (:residual r) tolerance)]
+                                 {:error :closed-loop-residual :mate (:mate r) :residual (:residual r)}))]
+            {:closed-loop/status (cond (seq unsupported) :unsupported
+                                       (seq conflicts) :conflict :else :solved)
+             :closed-loop/poses poses :closed-loop/iterations iteration
+             :closed-loop/max-residual max-residual :closed-loop/conflicts conflicts
+             :closed-loop/unsupported-mates (mapv :mate/id unsupported)})
+          (recur (reduce project poses supported) (inc iteration)))))))
+
 (defn occurrence-bounds [assembly occurrence-id]
   (let [o (get-in assembly [:assembly/occurrences occurrence-id])
         part (get-in assembly [:assembly/parts (:occurrence/part o)])

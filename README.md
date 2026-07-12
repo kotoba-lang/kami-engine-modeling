@@ -38,7 +38,10 @@ configurations/suppression, grounded state, deterministic coincident/distance
 mate solving, DOF and over-constraint diagnostics, and AABB interference
 depth/volume. Its kinematic layer adds revolute/prismatic joints, limits,
 gear/rack-pinion coupling, cycle diagnostics and deterministic forward poses.
-General nonlinear closed-loop 6-DOF solving remains a subsequent gate.
+An iterative projection solver now resolves cyclic coincident/distance point
+mate graphs by moving both free endpoints, returns convergence iterations and
+maximum residual, and reports every inconsistent loop mate deterministically.
+General rotational nonlinear closed-loop 6-DOF solving remains a subsequent gate.
 Nested subassembly instances now flatten to stable UUID paths with accumulated
 transforms and cycle diagnostics. Bounding-volume mass, center-of-mass and
 diagonal inertia are available per part/assembly; the data gate covers 1,000
@@ -135,4 +138,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 81 tests / 632 assertions).
+Run `clojure -M:test` (currently 82 tests / 639 assertions).

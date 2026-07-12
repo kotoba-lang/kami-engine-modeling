@@ -142,3 +142,31 @@
                                            [(assembly/occurrence (uid "duplicate/occ") (:part/id block))
                                             (assembly/occurrence (uid "duplicate/occ") (:part/id block))]
                                            [] {:default {}}))))
+
+(deftest cyclic-distance-mates-converge-and-report-inconsistent-loop
+  (let [a (assembly/occurrence (uid "loop/a") (:part/id block) {:grounded? true})
+        b (assembly/occurrence (uid "loop/b") (:part/id block))
+        c (assembly/occurrence (uid "loop/c") (:part/id block))
+        distance (fn [name from to value direction]
+                   (assembly/mate (uid name) :distance (:occurrence/id from) (:occurrence/id to)
+                                  {:a-point [0 0 0] :b-point [0 0 0]
+                                   :distance value :direction direction}))
+        ab (distance "loop/ab" a b 3 [1 0 0])
+        bc (distance "loop/bc" b c 4 [0 1 0])
+        ac (distance "loop/ac" a c 5 [3 4 0])
+        model (assembly/assembly (uid "loop/assembly") [block] [a b c] [ab bc ac] {:default {}})
+        solved (assembly/solve-closed-loop model 1.0e-8 200)
+        inconsistent (assembly/solve-closed-loop
+                      (assembly/assembly (uid "bad-loop") [block] [a b c]
+                                         [ab bc (distance "loop/bad-ac" a c 10 [1 0 0])] {:default {}})
+                      1.0e-8 100)]
+    (is (= :solved (:closed-loop/status solved)))
+    (is (< (:closed-loop/max-residual solved) 1.0e-8))
+    (is (every? true? (map #(< (Math/abs (- %1 %2)) 1.0e-8)
+                           (get-in solved [:closed-loop/poses (:occurrence/id b)]) [3 0 0])))
+    (is (every? true? (map #(< (Math/abs (- %1 %2)) 1.0e-8)
+                           (get-in solved [:closed-loop/poses (:occurrence/id c)]) [3 4 0])))
+    (is (= :conflict (:closed-loop/status inconsistent)))
+    (is (seq (:closed-loop/conflicts inconsistent)))
+    (is (= (sort-by str (map :mate (:closed-loop/conflicts inconsistent)))
+           (map :mate (:closed-loop/conflicts inconsistent))))))
