@@ -197,6 +197,37 @@
           next-faces (into (mapv second (remove #(removed (first %)) (map-indexed vector faces))) strip)]
       (cond-> (mesh vertices next-faces) uvs (assoc :mesh/uvs uvs)))))
 
+(defn knife-face
+  "Cut a polygon between points interpolated on two non-adjacent boundary
+  edges. The original face is replaced by two polygons and UVs are
+  interpolated for both inserted vertices. Edge arguments are local indices
+  into the face boundary, not global mesh edge indices."
+  [{:mesh/keys [vertices faces uvs]} face-index edge-a edge-b factor-a factor-b]
+  (let [face (get faces face-index) n (count face)]
+    (when-not face (throw (ex-info "knife face index out of bounds" {:face-index face-index})))
+    (when-not (and (<= 0 edge-a (dec n)) (<= 0 edge-b (dec n)))
+      (throw (ex-info "knife edge index out of bounds" {:edges [edge-a edge-b] :edge-count n})))
+    (when-not (and (number? factor-a) (< 0 factor-a 1) (number? factor-b) (< 0 factor-b 1))
+      (throw (ex-info "knife factors must be between 0 and 1" {:factors [factor-a factor-b]})))
+    (let [[i j fa fb] (if (< edge-a edge-b) [edge-a edge-b factor-a factor-b]
+                          [edge-b edge-a factor-b factor-a])]
+      (when (or (= i j) (= (inc i) j) (and (zero? i) (= j (dec n))))
+        (throw (ex-info "knife edges must be non-adjacent" {:edges [edge-a edge-b]})))
+      (let [next-index #(mod (inc %) n)
+            ai (count vertices) bi (inc ai)
+            point-a (interpolate (nth vertices (nth face i)) (nth vertices (nth face (next-index i))) fa)
+            point-b (interpolate (nth vertices (nth face j)) (nth vertices (nth face (next-index j))) fb)
+            polygon-a (vec (concat [ai] (subvec face (inc i) (inc j)) [bi]))
+            polygon-b (vec (concat [bi] (subvec face (inc j)) (subvec face 0 (inc i)) [ai]))
+            next-faces (into (assoc faces face-index polygon-a) [polygon-b])
+            result (mesh (conj vertices point-a point-b) next-faces)]
+        (if uvs
+          (assoc result :mesh/uvs
+                 (conj uvs
+                       (interpolate (nth uvs (nth face i)) (nth uvs (nth face (next-index i))) fa)
+                       (interpolate (nth uvs (nth face j)) (nth uvs (nth face (next-index j))) fb)))
+          result)))))
+
 (defn delete-face [m face-index]
   (update m :mesh/faces #(vec (concat (subvec % 0 face-index) (subvec % (inc face-index))))))
 

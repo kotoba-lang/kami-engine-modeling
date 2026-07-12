@@ -57,6 +57,19 @@
                  (m/bridge-faces (m/mesh [[0 0 0] [1 0 0] [0 1 0] [0 0 1] [1 0 1] [1 1 1] [0 1 1]]
                                          [[0 1 2] [3 4 5 6]]) 0 1)))))
 
+(deftest knife-cuts-between-non-adjacent-polygon-edges
+  (let [base (m/planar-unwrap (m/quad 4 2) :z)
+        cut (m/knife-face base 0 0 2 0.25 0.75)]
+    (is (= 6 (count (:mesh/vertices cut))))
+    (is (= 2 (count (:mesh/faces cut))))
+    (is (= [[4 1 2 5] [5 3 0 4]] (:mesh/faces cut)))
+    (is (= [-1.0 -1.0 0.0] (nth (:mesh/vertices cut) 4)))
+    (is (= [-1.0 1.0 0.0] (nth (:mesh/vertices cut) 5)))
+    (is (= [0.25 0.0] (nth (:mesh/uvs cut) 4)))
+    (is (m/valid-mesh? cut))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/knife-face base 0 0 1 0.5 0.5)))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/knife-face base 0 0 2 0 0.5)))))
+
 (deftest vertex-edge-editing-and-picking
   (let [base (m/cube 2) vertex (m/translate-vertex base 6 [0 0 1])
         edge (m/translate-edge base [5 6] [1 0 0])]
