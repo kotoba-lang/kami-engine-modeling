@@ -33,6 +33,11 @@
   (let [next (apply-operation (:history/head history) op)]
     (-> history (assoc :history/head next) (update :history/operations conj op))))
 
+(defn append-operation-idempotent [history op]
+  (if (some #(= (:operation/id op) (:operation/id %)) (:history/operations history))
+    (assoc history :history/last-delivery {:status :duplicate :operation (:operation/id op)})
+    (assoc (append-operation history op) :history/last-delivery {:status :applied :operation (:operation/id op)})))
+
 (defn checkpoint [history]
   (assoc-in history [:history/snapshots (get-in history [:history/head :document/revision])] (:history/head history)))
 
@@ -137,7 +142,21 @@
                                                      :command (:operation/command op)})))
   (when-not (verify-operation op verifier)
     (throw (ex-info "operation signature verification failed" {:operation (:operation/id op)})))
-  (append-operation history op))
+  (append-operation-idempotent history op))
+
+(defn revoke-member [policy actor revoker]
+  (when-not (authorized? policy revoker :admin)
+    (throw (ex-info "member revocation requires owner" {:revoker revoker})))
+  (update policy :policy/members dissoc actor))
+
+(defn permission-audit [policy operations]
+  (let [entries (mapv (fn [op]
+                        {:operation (:operation/id op) :actor (:operation/actor op)
+                         :command (:operation/command op)
+                         :authorized? (authorized? policy (:operation/actor op) (:operation/command op))}) operations)]
+    {:permission-audit/entries entries
+     :permission-audit/violations (vec (remove :authorized? entries))
+     :permission-audit/valid? (every? :authorized? entries)}))
 
 (defn replica [id history]
   (when-not (uuid? id) (throw (ex-info "replica id must be UUID" {})))
@@ -171,6 +190,11 @@
                         :sync/tips tips :sync/applied applied' :sync/pending pending'}]
             [(assoc a :replica/known-operations (set (map :operation/id applied')) :replica/sync result)
              (assoc b :replica/known-operations (set (map :operation/id applied')) :replica/sync result)]))))))
+
+(defn resume-sync
+  "Retry a prior missing-parent sync after either replica received more ops."
+  [a b]
+  (sync-replicas (dissoc a :replica/sync) (dissoc b :replica/sync)))
 
 (defn presence [replica-id actor cursor selection timestamp]
   {:presence/replica replica-id :presence/actor actor :presence/cursor cursor

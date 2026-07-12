@@ -107,3 +107,39 @@
     (is (:presence/ephemeral? presence))
     (is (collaboration/canonical-history? history))
     (is (false? (collaboration/canonical-history? (assoc history :history/presence [presence]))))))
+
+(deftest duplicate-delivery-revocation-and-permission-audit
+  (let [base (base-document) a (uid "a") actor "did:plc:editor" owner "did:plc:owner"
+        policy (collaboration/access-policy (:document/id base) {actor :editor owner :owner})
+        op (collaboration/operation (uid "dedupe") actor 1 (:document/revision base)
+                                    :assoc [:document/nodes a :value] 8 1)
+        once (collaboration/append-operation-idempotent (collaboration/history base) op)
+        twice (collaboration/append-operation-idempotent once op)
+        audit (collaboration/permission-audit policy (:history/operations twice))
+        revoked (collaboration/revoke-member policy actor owner)]
+    (is (= 1 (count (:history/operations twice))))
+    (is (= :duplicate (get-in twice [:history/last-delivery :status])))
+    (is (:permission-audit/valid? audit))
+    (is (not (collaboration/authorized? revoked actor :assoc)))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (collaboration/revoke-member policy owner actor)))))
+
+(deftest out-of-order-missing-parent-recovers-after-reconnect
+  (let [base (base-document) a (uid "a")
+        parent (collaboration/operation (uid "fault/parent") "did:plc:a" 1 (:document/revision base)
+                                        :assoc [:document/nodes a :value] 2 1)
+        after-parent (collaboration/apply-operation base parent)
+        child (collaboration/operation (uid "fault/child") "did:plc:a" 2 (:document/revision after-parent)
+                                       :assoc [:document/nodes a :value] 3 2)
+        empty-replica (collaboration/replica (uid "fault/empty") (collaboration/history base))
+        child-only-history (assoc (collaboration/history base) :history/operations [child])
+        child-replica (collaboration/replica (uid "fault/child-replica") child-only-history)
+        [waiting-a waiting-b] (collaboration/sync-replicas empty-replica child-replica)
+        parent-history (collaboration/append-operation (collaboration/history base) parent)
+        repaired-a (assoc waiting-a :replica/history parent-history)
+        [recovered-a recovered-b] (collaboration/resume-sync repaired-a waiting-b)]
+    (is (= :missing-parent (get-in waiting-a [:replica/sync :sync/status])))
+    (is (= 1 (count (get-in waiting-a [:replica/sync :sync/pending]))))
+    (is (= :converged (get-in recovered-a [:replica/sync :sync/status])))
+    (is (= 2 (count (:replica/known-operations recovered-a))))
+    (is (= (:replica/known-operations recovered-a) (:replica/known-operations recovered-b)))
+    (is (= 3 (-> recovered-a :replica/sync :sync/tips vals first (get-in [:document/nodes a :value]))))))

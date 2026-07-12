@@ -90,8 +90,10 @@ explainable conflicts, selective inverse operations, checkpoints and audit.
 The gate covers 10,000 operations without requiring full-log replay after a
 checkpoint. It also provides role-based authorization, injected signature/
 verification adapters, tamper rejection, offline replica synchronization and
-strictly ephemeral presence. Production key management and network transport
-remain integration gates.
+strictly ephemeral presence. At-least-once delivery is idempotent; out-of-order
+children remain pending and converge after parent delivery/reconnect. Owner-only
+revocation and permission audits are explicit. Production key management remains
+an integration gate.
 
 `kami.modeling.document` is the first shared CAD foundation: a versioned
 immutable document graph with stable UUID nodes, explicit units and modeling
@@ -100,4 +102,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 70 tests / 564 assertions).
+Run `clojure -M:test` (currently 72 tests / 575 assertions).
