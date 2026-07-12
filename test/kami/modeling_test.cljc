@@ -43,6 +43,20 @@
     (is (m/valid-mesh? cut))
     (is (thrown? #?(:clj Exception :cljs js/Error) (m/loop-cut-face (m/mesh [[0 0 0] [1 0 0] [0 1 0]] [[0 1 2]]) 0 0.5)))))
 
+(deftest bridge-connects-disjoint-loops-with-deterministic-quads
+  (let [open-loops (m/mesh [[-1 -1 0] [1 -1 0] [1 1 0] [-1 1 0]
+                            [-1 -1 3] [-1 1 3] [1 1 3] [1 -1 3]]
+                           [[0 1 2 3] [4 5 6 7]])
+        bridged (m/bridge-faces open-loops 0 1)]
+    (is (= 8 (count (:mesh/vertices bridged))))
+    (is (= 4 (count (:mesh/faces bridged))))
+    (is (every? #(= 4 (count %)) (:mesh/faces bridged)))
+    (is (m/valid-mesh? bridged))
+    (is (thrown? #?(:clj Exception :cljs js/Error) (m/bridge-faces (m/cube 2) 0 2)))
+    (is (thrown? #?(:clj Exception :cljs js/Error)
+                 (m/bridge-faces (m/mesh [[0 0 0] [1 0 0] [0 1 0] [0 0 1] [1 0 1] [1 1 1] [0 1 1]]
+                                         [[0 1 2] [3 4 5 6]]) 0 1)))))
+
 (deftest vertex-edge-editing-and-picking
   (let [base (m/cube 2) vertex (m/translate-vertex base 6 [0 0 1])
         edge (m/translate-edge base [5 6] [1 0 0])]

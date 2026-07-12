@@ -1,6 +1,7 @@
 (ns kami.modeling
   "Portable polygon-editing domain engine. Meshes are immutable EDN values;
-  every operation returns a new mesh suitable for undo/redo and persistence.")
+  every operation returns a new mesh suitable for undo/redo and persistence."
+  (:require [clojure.set :as set]))
 
 (defn mesh
   "Construct a mesh from vertex positions and polygon index vectors."
@@ -162,6 +163,39 @@
                (conj uvs (interpolate (nth uvs a) (nth uvs b) factor)
                          (interpolate (nth uvs d) (nth uvs c) factor)))
         result))))
+
+(defn- rotations [values]
+  (mapv (fn [offset] (vec (concat (subvec values offset) (subvec values 0 offset))))
+        (range (count values))))
+
+(defn- distance-squared [a b]
+  (reduce + (map (fn [x y] (let [d (- x y)] (* d d))) a b)))
+
+(defn- align-loop [vertices source target]
+  (let [candidates (concat (rotations target) (rotations (vec (reverse target))))]
+    (apply min-key (fn [candidate]
+                     (reduce + (map #(distance-squared (nth vertices %1) (nth vertices %2)) source candidate)))
+           candidates)))
+
+(defn bridge-faces
+  "Remove two disjoint polygon caps and connect their boundary loops with a
+  quad strip. Loop winding and cyclic offset are chosen by minimum geometric
+  distance, making imported loops deterministic without manual reindexing."
+  [{:mesh/keys [vertices faces uvs] :as m} face-a face-b]
+  (when (= face-a face-b) (throw (ex-info "bridge requires two different faces" {:face face-a})))
+  (let [a (get faces face-a) b (get faces face-b)]
+    (when-not (and a b) (throw (ex-info "bridge face index out of bounds" {:faces [face-a face-b]})))
+    (when-not (= (count a) (count b))
+      (throw (ex-info "bridge loops must have equal vertex counts" {:counts [(count a) (count b)]})))
+    (when (seq (set/intersection (set a) (set b)))
+      (throw (ex-info "bridge loops must be disjoint" {:faces [face-a face-b]})))
+    (let [aligned (align-loop vertices a b)
+          next-a (concat (rest a) [(first a)])
+          next-b (concat (rest aligned) [(first aligned)])
+          strip (mapv vector a next-a next-b aligned)
+          removed (set [face-a face-b])
+          next-faces (into (mapv second (remove #(removed (first %)) (map-indexed vector faces))) strip)]
+      (cond-> (mesh vertices next-faces) uvs (assoc :mesh/uvs uvs)))))
 
 (defn delete-face [m face-index]
   (update m :mesh/faces #(vec (concat (subvec % 0 face-index) (subvec % (inc face-index))))))
