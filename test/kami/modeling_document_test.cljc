@@ -39,3 +39,29 @@
     (is (= 2 (count (:document/nodes first-pass))))
     (is (= :mesh-object (:node/kind child)))
     (is (uuid? (:node/parent child)))))
+
+;; ---------------------------------------------------------------------
+;; Regression: `stable-uuid` is the identity key for documents, assemblies,
+;; occurrences and drawing views. Until 2026-08-20 it returned the SAME uuid
+;; for every short name under ClojureScript and never agreed with the JVM for
+;; any name, while this suite — which only ran on the JVM — was green. The
+;; frozen values below are the JVM values, unchanged by the fix: they are
+;; here so a future change to the hash cannot silently rewrite identities
+;; that are already persisted.
+;; ---------------------------------------------------------------------
+
+(deftest stable-uuid-is-injective-and-frozen
+  (testing "short names do not collide (they all did, under CLJS)"
+    (is (= 4 (count (distinct (map #(document/stable-uuid "ns" %) ["a" "b" "c" "d"]))))))
+
+  (testing "the namespace participates"
+    (is (not= (document/stable-uuid "ns1" "x") (document/stable-uuid "ns2" "x"))))
+
+  (testing "frozen values — identical on both platforms"
+    (is (= "01234628-023d-5c3c-a438-6a600633b884" (str (document/stable-uuid "ns" "a"))))
+    (is (= "456ac941-6767-5a55-a7c7-bf794828149d" (str (document/stable-uuid "ns" "zzz")))))
+
+  (testing "version 5 / RFC-4122 variant nibbles"
+    (let [s (str (document/stable-uuid "ns" "a"))]
+      (is (= \5 (nth s 14)))
+      (is (= \a (nth s 19))))))

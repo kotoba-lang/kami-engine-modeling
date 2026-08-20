@@ -8,15 +8,40 @@
 (def supported-units #{:mm :cm :m :in :ft})
 (def ^:private metres-per-unit {:mm 0.001 :cm 0.01 :m 1.0 :in 0.0254 :ft 0.3048})
 
+(defn- char-code
+  "UTF-16 code unit at `i`. `reduce` over a string yields characters on the JVM
+  and single-character STRINGS in ClojureScript, and `(int \"a\")` is not a code
+  point there — it is NaN. Indexing both platforms explicitly removes the
+  difference at its source."
+  [^String s i]
+  #?(:clj (int (.charAt s i)) :cljs (.charCodeAt s i)))
+
+(defn- mix32
+  "One step of the 31x+c string hash, in int32 arithmetic on both platforms.
+
+  ClojureScript numbers are doubles, so `(* 31 h)` silently leaves the exact
+  integer range and `bit-or` then truncates a value the JVM never computed.
+  `Math/imul` is the int32 multiply the JVM's `unchecked-multiply-int` is."
+  [h c]
+  #?(:clj (unchecked-add-int (unchecked-multiply-int (int 31) (unchecked-int h)) (int c))
+     :cljs (bit-or 0 (+ (js/Math.imul 31 h) c))))
+
 (defn stable-uuid
   "RFC-4122 name UUID. The same namespace/name pair is stable across CLJ/CLJS.
+
+  That claim was false until 2026-08-20: under ClojureScript this returned the
+  SAME uuid for every short name (`\"a\"`, `\"b\"` and `\"c\"` all collided) and
+  never agreed with the JVM for any name. `reduce` over a string gives 1-char
+  strings in CLJS, so `(int ch)` was NaN and the accumulator collapsed. The JVM
+  values are canonical — CLJS was moved onto them, not the other way round.
+
   This is an identity key, not a content hash or security primitive."
   [namespace name]
   (let [seed (str namespace "/" name)
+        n (count seed)
         hash32 (fn [salt]
-                 (reduce (fn [h ch]
-                           #?(:clj (unchecked-add-int (unchecked-multiply-int 31 (int h)) (int ch))
-                              :cljs (bit-or 0 (+ (* 31 h) (int ch))))) salt seed))
+                 (loop [h salt i 0]
+                   (if (= i n) h (recur (mix32 h (char-code seed i)) (inc i)))))
         hex8 (fn [n]
                (let [s (#?(:clj Long/toHexString :cljs (fn [x] (.toString (unsigned-bit-shift-right x 0) 16)))
                         (bit-and (long n) 0xffffffff))]
