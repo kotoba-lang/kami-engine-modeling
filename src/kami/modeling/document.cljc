@@ -68,12 +68,28 @@
   (assoc quantity :quantity/value (convert-length (:quantity/value quantity) (:quantity/unit quantity) unit)
                   :quantity/unit unit))
 
-(defn- hash-text [s]
-  ;; Deterministic portable FNV-1a-style identifier. Payload integrity may use
-  ;; SHA-256 externally; this compact id is for revision/cache comparison.
-  (let [h (reduce (fn [acc ch]
-                    #?(:clj (unchecked-multiply-int (bit-xor (int acc) (int ch)) 16777619)
-                       :cljs (bit-or 0 (* (bit-xor acc (int ch)) 16777619)))) -2128831035 s)]
+(defn- hash-text
+  "Deterministic portable FNV-1a-style identifier. Payload integrity may use
+  SHA-256 externally; this compact id is for revision/cache comparison.
+
+  Same defect as `stable-uuid` had, and the same fix: `reduce` over a string
+  yields 1-character STRINGS in ClojureScript, so `(int ch)` was NaN, and
+  `(* … 16777619)` left the exact integer range where the JVM used int32.
+  The consequence was subtler than a collision — each runtime was internally
+  consistent, so `valid-document?` passed on both — but a JVM host and a
+  browser client computed DIFFERENT `:document/revision` values for the same
+  document. Since that revision is what `projection-current?` and
+  `drawing/current?` compare, and what collaboration operations are signed
+  against, the two sides disagreed about whether anything was up to date.
+  JVM values are canonical; CLJS was moved onto them."
+  [s]
+  (let [n (count s)
+        h (loop [acc (int -2128831035) i 0]
+            (if (= i n)
+              acc
+              (recur #?(:clj (unchecked-multiply-int (bit-xor (int acc) (char-code s i)) 16777619)
+                        :cljs (bit-or 0 (js/Math.imul (bit-xor acc (char-code s i)) 16777619)))
+                     (inc i))))]
     (str "k1-" (#?(:clj Long/toUnsignedString :cljs (fn [x] (.toString (unsigned-bit-shift-right x 0) 36)))
                  (bit-and (long h) 0xffffffff) 36))))
 

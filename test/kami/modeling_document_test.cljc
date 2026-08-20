@@ -65,3 +65,18 @@
     (let [s (str (document/stable-uuid "ns" "a"))]
       (is (= \5 (nth s 14)))
       (is (= \a (nth s 19))))))
+
+(deftest revision-id-agrees-across-platforms
+  ;; `:document/revision` is what `projection-current?`, `drawing/current?` and
+  ;; the collaboration ledger compare. Until 2026-08-20 the JVM and CLJS
+  ;; computed different values for the same document — each internally
+  ;; consistent, so `valid-document?` passed on both and nothing looked wrong
+  ;; until the two sides met. These frozen values are the JVM ones.
+  (let [doc (document/document (document/stable-uuid "t" "doc") :mm 0.001)]
+    (testing "frozen revision for a fixed empty document"
+      (is (= "k1-urrmhc" (:document/revision doc))))
+    (testing "the document validates against its own revision"
+      (is (document/valid-document? doc)))
+    (testing "a different document gets a different revision"
+      (is (not= (:document/revision doc)
+                (:document/revision (document/document (document/stable-uuid "t" "doc") :m 0.001)))))))
