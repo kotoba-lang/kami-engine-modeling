@@ -1,5 +1,5 @@
 (ns kami.modeling-test
-  (:require [clojure.test :refer [deftest is]] [kami.modeling :as m]))
+  (:require [clojure.test :refer [deftest is testing]] [kami.modeling :as m]))
 
 (deftest extrude-is-pure-and-keeps-a-valid-mesh
   (let [base (m/quad 2 4) result (m/extrude-face base 0 [0 0 3])]
@@ -288,3 +288,27 @@
     (is (m/valid-mesh? moved))
     (is (thrown? #?(:clj Exception :cljs js/Error) (m/transform-uvs (m/cube 1) [0] {})))
     (is (thrown? #?(:clj Exception :cljs js/Error) (m/transform-uvs base [0] {:scale [0 1]})))))
+
+;; ---------------------------------------------------------------------
+;; Regression: `subdivide-mesh` built its vertex list in an atom while the
+;; face list was a lazy seq, and handed `mesh` whatever the atom happened to
+;; hold when the argument was evaluated. On a cube the JVM saw 26 vertices
+;; and ClojureScript saw 24 — with faces still referencing index 25, so the
+;; CLJS result was a mesh `valid-mesh?` rejects. Counting alone did not catch
+;; it; the index-range assertion is the one that names the damage.
+;; ---------------------------------------------------------------------
+
+(deftest subdivision-is-deterministic-across-platforms
+  (let [cube (m/cube 2)
+        s (m/subdivide-mesh cube)
+        vs (:mesh/vertices s)
+        idx (mapcat identity (:mesh/faces s))]
+    (testing "8 corners + 12 edge midpoints + 6 face centres"
+      (is (= 26 (count vs))))
+    (testing "one quad per original face corner"
+      (is (= 24 (count (:mesh/faces s)))))
+    (testing "every face index addresses a vertex that exists"
+      (is (every? #(< -1 % (count vs)) idx))
+      (is (= 26 (count (distinct idx)))))
+    (testing "and the result is a mesh by this namespace's own predicate"
+      (is (m/valid-mesh? s)))))

@@ -494,23 +494,47 @@
 
 (defn subdivide-mesh
   "One linear Catmull-Clark topology step: shared edge points plus face
-  centers, producing one quad per original face corner."
+  centers, producing one quad per original face corner.
+
+  Written as an explicit `reduce` rather than a lazy `mapcat` over atoms.
+  The lazy version read the vertex atom in `(mesh @vertices (vec faces))`,
+  where argument order and chunked realization decide whether the appends
+  made while forcing `faces` are visible in the vector that is handed to
+  `mesh`. That is a race between laziness and effects, and it resolved
+  differently per platform: on a cube the JVM produced 26 vertices while
+  ClojureScript produced 24 — with faces still referencing index 25, i.e. a
+  mesh `valid-mesh?` rejects. The vertex ORDER here is unchanged from the
+  JVM behaviour (per face: its centre, then that face's edge midpoints as
+  they are first needed), so existing indices are stable."
   [m]
-  (let [vertices (atom (:mesh/vertices m)) edge-ids (atom {})
-        midpoint (fn [a b]
-                   (let [edge (if (< a b) [a b] [b a])]
-                     (if-let [id (get @edge-ids edge)] id
-                       (let [id (count @vertices) p (mapv #(/ (+ %1 %2) 2) (nth @vertices a) (nth @vertices b))]
-                         (swap! vertices conj p) (swap! edge-ids assoc edge id) id))))
-        faces (mapcat (fn [[face-index face]]
-                        (let [center-id (count @vertices)
-                              _ (swap! vertices conj (face-center m face-index))
-                              n (count face)]
-                          (mapv (fn [i]
-                                  (let [prev (nth face (mod (dec i) n)) current (nth face i) next (nth face (mod (inc i) n))]
-                                    [current (midpoint current next) center-id (midpoint prev current)])) (range n))))
-                      (map-indexed vector (:mesh/faces m)))]
-    (mesh @vertices (vec faces))))
+  (let [step (fn [{:keys [vertices edge-ids faces]} [face-index face]]
+               (let [center-id (count vertices)
+                     vertices (conj vertices (face-center m face-index))
+                     n (count face)
+                     ;; midpoint is shared between adjacent faces: created once,
+                     ;; then looked up by its unordered vertex pair.
+                     ensure (fn [[vertices edge-ids] a b]
+                              (let [edge (if (< a b) [a b] [b a])]
+                                (if (contains? edge-ids edge)
+                                  [vertices edge-ids (get edge-ids edge)]
+                                  (let [id (count vertices)
+                                        p (mapv #(/ (+ %1 %2) 2) (nth vertices a) (nth vertices b))]
+                                    [(conj vertices p) (assoc edge-ids edge id) id]))))
+                     [vertices edge-ids quads]
+                     (reduce (fn [[vertices edge-ids acc] i]
+                               (let [prev (nth face (mod (dec i) n))
+                                     current (nth face i)
+                                     nxt (nth face (mod (inc i) n))
+                                     [vertices edge-ids m1] (ensure [vertices edge-ids] current nxt)
+                                     [vertices edge-ids m2] (ensure [vertices edge-ids] prev current)]
+                                 [vertices edge-ids (conj acc [current m1 center-id m2])]))
+                             [vertices edge-ids []]
+                             (range n))]
+                 {:vertices vertices :edge-ids edge-ids :faces (into faces quads)}))
+        {:keys [vertices faces]} (reduce step
+                                         {:vertices (:mesh/vertices m) :edge-ids {} :faces []}
+                                         (map-indexed vector (:mesh/faces m)))]
+    (mesh vertices faces)))
 
 (def modifier-registry
   {:mirror {:input :mesh :output :mesh}
