@@ -40,6 +40,7 @@
          '[kami.modeling-collaboration-test]
          '[kami.modeling-document-test]
          '[kami.modeling-drawing-test]
+         '[kami.modeling-sheet-metal-test]
          '[kami.modeling-feature-graph-test]
          '[kami.modeling-large-scene-test]
          '[kami.modeling-nurbs-test]
@@ -54,6 +55,7 @@
              'kami.modeling-brep-test
              'kami.modeling-collaboration-test
              'kami.modeling-document-test
+             'kami.modeling-sheet-metal-test
              'kami.modeling-drawing-test
              'kami.modeling-feature-graph-test
              'kami.modeling-large-scene-test
