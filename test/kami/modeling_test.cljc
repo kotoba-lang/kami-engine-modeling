@@ -377,3 +377,70 @@
     (testing "and Catmull-Clark can be asked for by name"
       (is (every? #(< (Math/abs (- % (/ 5.0 9.0))) 1.0e-12)
                   (extreme-corner (with {:levels 1 :scheme :catmull-clark})))))))
+
+;; ---------------------------------------------------------------------
+;; LSCM unwrap (2026-08-22)
+;;
+;; `planar-unwrap` projects onto an axis plane, which squashes every face not
+;; parallel to it — and the squash is invisible in the UV layout itself. LSCM
+;; is conformal: allowed to scale, not to shear.
+;; ---------------------------------------------------------------------
+
+(defn- corner-angle [p q r]
+  (let [u (mapv - q p) v (mapv - r p)
+        du (Math/sqrt (reduce + (map * u u)))
+        dv (Math/sqrt (reduce + (map * v v)))]
+    (Math/acos (max -1.0 (min 1.0 (/ (reduce + (map * u v)) (* du dv)))))))
+
+(defn- worst-angle-error [mesh uvs tris]
+  (apply max
+         (mapcat (fn [[a b c]]
+                   (let [V (:mesh/vertices mesh)
+                         uv (fn [i] (conj (nth uvs i) 0.0))]
+                     [(Math/abs (- (corner-angle (nth V a) (nth V b) (nth V c))
+                                   (corner-angle (uv a) (uv b) (uv c))))
+                      (Math/abs (- (corner-angle (nth V b) (nth V c) (nth V a))
+                                   (corner-angle (uv b) (uv c) (uv a))))]))
+                 tris)))
+
+(def ^:private folded-strip
+  (m/mesh [[0 0 0] [1 0 0] [0 1 0] [1 1 0] [0 2 1] [1 2 1]]
+          [[0 1 3 2] [2 3 5 4]]))
+
+(def ^:private folded-tris [[0 1 3] [0 3 2] [2 3 5] [2 5 4]])
+
+(deftest lscm-preserves-angles-where-planar-projection-does-not
+  (testing "a flat patch unwraps to itself"
+    (let [grid (m/mesh [[0 0 0] [1 0 0] [2 0 0] [0 1 0] [1 1 0] [2 1 0]]
+                       [[0 1 4 3] [1 2 5 4]])
+          uvs (:mesh/uvs (m/lscm-unwrap grid))]
+      (is (< (worst-angle-error grid uvs [[0 1 4] [0 4 3] [1 2 5] [1 5 4]]) 1.0e-12))))
+
+  (testing "on a fold, the axis projection shears by a quarter radian and LSCM does not"
+    ;; 0.49 rad is 28 degrees. Nothing in a UV layout shows it; only comparing
+    ;; the angles to the surface does.
+    (let [planar (worst-angle-error folded-strip
+                                    (:mesh/uvs (m/planar-unwrap folded-strip :z))
+                                    folded-tris)
+          lscm (worst-angle-error folded-strip
+                                  (:mesh/uvs (m/lscm-unwrap folded-strip))
+                                  folded-tris)]
+      (is (> planar 0.4))
+      (is (< lscm 1.0e-12))))
+
+  (testing "every vertex gets a UV"
+    (is (= (count (:mesh/vertices folded-strip))
+           (count (:mesh/uvs (m/lscm-unwrap folded-strip)))))))
+
+(deftest uv-islands-are-found-and-not-laid-out-by-guesswork
+  (let [two (m/mesh [[0 0 0] [1 0 0] [0 1 0] [5 0 0] [6 0 0] [5 1 0]]
+                    [[0 1 2] [3 4 5]])]
+    (testing "two patches sharing no vertex are two islands"
+      (is (= [[0] [1]] (m/uv-islands two))))
+    (testing "one connected patch is one island"
+      (is (= 1 (count (m/uv-islands folded-strip)))))
+    (testing "and an unwrap of two islands is refused, not offset arbitrarily"
+      ;; Where to put one island relative to the other is a layout decision.
+      (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                            #"one island"
+                            (m/lscm-unwrap two))))))

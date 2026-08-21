@@ -21,6 +21,149 @@
            (and (vector? uvs) (= (count vertices) (count uvs))
                 (every? #(and (vector? %) (= 2 (count %)) (every? number? %)) uvs)))))
 
+(defn- triangulated
+  "Faces as triangles, fanned. UV work is defined per triangle."
+  [{:mesh/keys [faces]}]
+  (vec (mapcat (fn [f] (map (fn [i] [(first f) (nth f i) (nth f (inc i))])
+                            (range 1 (dec (count f)))))
+               faces)))
+
+(defn uv-islands
+  "Groups of face indices connected through shared vertices, in ascending order.
+
+  An unwrap is per island: two patches that share no vertex cannot be laid out
+  in one chart without an arbitrary choice about where to put them relative to
+  each other, and making that choice silently is how a seam ends up somewhere
+  nobody put it."
+  [{:mesh/keys [faces] :as m}]
+  (when-not (valid-mesh? m) (throw (ex-info "invalid mesh" {:mesh m})))
+  (let [v->faces (reduce (fn [acc [fi f]] (reduce #(update %1 %2 (fnil conj #{}) fi) acc f))
+                         {} (map-indexed vector faces))]
+    (loop [remaining (set (range (count faces))) out []]
+      (if (empty? remaining)
+        (vec (sort-by first out))
+        (let [seed (first (sort remaining))
+              island (loop [stack [seed] seen #{seed}]
+                       (if (empty? stack)
+                         seen
+                         (let [fi (peek stack)
+                               nbrs (remove seen (mapcat #(get v->faces % #{}) (nth faces fi)))]
+                           (recur (into (pop stack) nbrs) (into seen nbrs)))))]
+          (recur (reduce disj remaining island) (conj out (vec (sort island)))))))))
+
+(defn- solve-normal-equations
+  "Gaussian elimination with partial pivoting on `A x = b`, A square."
+  [A b]
+  (let [n (count b)
+        aug (mapv (fn [row v] (conj (vec row) v)) A b)]
+    (loop [k 0 m aug]
+      (if (= k n)
+        (loop [i (dec n) x (vec (repeat n 0.0))]
+          (if (neg? i)
+            x
+            (let [row (nth m i)
+                  s (reduce + (map * (subvec row (inc i) n) (subvec x (inc i) n)))]
+              (recur (dec i) (assoc x i (/ (- (nth row n) s) (nth row i)))))))
+        (let [piv (apply max-key #(Math/abs (nth (nth m %) k)) (range k n))]
+          (when (< (Math/abs (nth (nth m piv) k)) 1e-14)
+            (throw (ex-info "LSCM system is singular; pin two vertices that are not coincident"
+                            {:column k})))
+          (let [m (if (= piv k) m (assoc m k (nth m piv) piv (nth m k)))
+                pk (nth m k)
+                m (reduce (fn [mm i]
+                            (let [ri (nth mm i)
+                                  f (/ (nth ri k) (nth pk k))]
+                              (assoc mm i (mapv (fn [a bb] (- a (* f bb))) ri pk))))
+                          m (range (inc k) n))]
+            (recur (inc k) m)))))))
+
+(defn lscm-unwrap
+  "Least-squares conformal UV unwrap (Levy et al. 2002).
+
+  Conformal means angle-preserving: the map is allowed to scale but not to
+  shear, which is what `planar-unwrap` cannot promise — projecting onto an axis
+  plane squashes every face that is not parallel to it, and the squash is
+  invisible in the UV layout itself.
+
+  Two vertices are pinned to fix the remaining similarity (rotation, scale,
+  translation); by default the two ends of the longest edge of the first
+  triangle, which keeps the pinning away from a degenerate pair. Returns the
+  mesh with `:mesh/uvs`.
+
+  ⚠ The least-squares system is solved through DENSE normal equations, which is
+  O(n^3) in the vertex count. That is fine for the patches this is tested on and
+  wrong for a production mesh; a sparse solver is the obvious next step and is
+  not pretended to be here.
+
+  Islands must be unwrapped one at a time — see `uv-islands`. A mesh with more
+  than one island is refused rather than laid out with an arbitrary offset
+  between the pieces."
+  ([m] (lscm-unwrap m nil))
+  ([{:mesh/keys [vertices] :as m} pins]
+   (when-not (valid-mesh? m) (throw (ex-info "invalid mesh" {:mesh m})))
+   (let [islands (uv-islands m)]
+     (when (> (count islands) 1)
+       (throw (ex-info (str "lscm-unwrap takes one island; this mesh has "
+                            (count islands)
+                            ". Unwrap them separately — placing them relative to"
+                            " each other is a layout decision, not an unwrap.")
+                       {:islands (count islands)})))
+     (let [tris (triangulated m)
+           n (count vertices)
+           ;; local 2D frame per triangle
+           local (mapv (fn [[a b c]]
+                         (let [p1 (nth vertices a) p2 (nth vertices b) p3 (nth vertices c)
+                               e1 (mapv - p2 p1) e2 (mapv - p3 p1)
+                               len (Math/sqrt (reduce + (map * e1 e1)))
+                               ex (mapv #(/ % len) e1)
+                               d (reduce + (map * e2 ex))
+                               perp (mapv - e2 (mapv #(* d %) ex))
+                               h (Math/sqrt (reduce + (map * perp perp)))]
+                           [[0.0 0.0] [len 0.0] [d h]]))
+                       tris)
+           [p0 p1] (or pins (let [[a b _] (first tris)] [a b]))
+           free (vec (remove #{p0 p1} (range n)))
+           idx (into {} (map-indexed (fn [i v] [v i]) free))
+           nf (count free)
+           ;; real system: 2 equations per triangle, unknowns [u_free v_free]
+           rows (vec (mapcat
+                      (fn [[a b c] [[x1 y1] [x2 y2] [x3 y3]]]
+                        (let [dt (- (* (- x2 x1) (- y3 y1)) (* (- y2 y1) (- x3 x1)))
+                              sd (Math/sqrt (Math/abs dt))
+                              w (fn [xj yj xk yk] [(/ (- xk xj) sd) (/ (- yk yj) sd)])
+                              ws [(w x2 y2 x3 y3) (w x3 y3 x1 y1) (w x1 y1 x2 y2)]
+                              vs [a b c]
+                              row (fn [re?]
+                                    (let [coef (vec (repeat (* 2 nf) 0.0))
+                                          rhs (atom 0.0)
+                                          put (fn [cf v wr wi]
+                                                (let [[cu cv] (if re? [wr (- wi)] [wi wr])]
+                                                  (if-let [j (idx v)]
+                                                    (-> cf (update j + cu) (update (+ nf j) + cv))
+                                                    (let [[pu pv] (if (= v p0) [0.0 0.0] [1.0 0.0])]
+                                                      (swap! rhs - (+ (* cu pu) (* cv pv)))
+                                                      cf))))
+                                          cf (reduce (fn [acc [v [wr wi]]] (put acc v wr wi))
+                                                     coef (map vector vs ws))]
+                                      [cf @rhs]))]
+                          [(row true) (row false)]))
+                      tris local))
+           A (mapv first rows)
+           bb (mapv second rows)
+           ;; normal equations
+           cols (* 2 nf)
+           AtA (mapv (fn [i] (mapv (fn [j] (reduce + (map (fn [r] (* (nth r i) (nth r j))) A)))
+                                   (range cols)))
+                     (range cols))
+           Atb (mapv (fn [i] (reduce + (map (fn [r v] (* (nth r i) v)) A bb))) (range cols))
+           x (solve-normal-equations AtA Atb)
+           uvs (mapv (fn [v]
+                       (cond (= v p0) [0.0 0.0]
+                             (= v p1) [1.0 0.0]
+                             :else (let [j (idx v)] [(nth x j) (nth x (+ nf j))])))
+                     (range n))]
+       (assoc m :mesh/uvs uvs)))))
+
 (defn planar-unwrap
   "Generate normalized per-vertex UVs by projecting onto an axis plane.
   Axis is the projection normal (:x, :y, or :z). Degenerate extents map to 0."
