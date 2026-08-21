@@ -271,6 +271,94 @@
          "0\nSECTION\n2\nENTITIES\n" (string/join lines) (string/join text-entities)
          "0\nENDSEC\n0\nEOF\n")))
 
+(def dxf-unit-codes
+  "DXF `$INSUNITS` codes, both directions. The writer emits these; a reader that
+  ignored them would hand back numbers with no scale, which is the same as
+  handing back the wrong drawing."
+  {1 :in 2 :ft 4 :mm 5 :cm 6 :m})
+
+(def dxf-readable-entities
+  "Entity types `read-dxf` understands. Everything else in the file is reported
+  by name in `:dxf/unsupported` rather than dropped — a reader that silently
+  discards what it does not know turns someone else's drawing into a subset of
+  itself and says nothing."
+  #{"LINE" "TEXT" "CIRCLE" "ARC" "LWPOLYLINE"})
+
+(defn- dxf-pairs
+  "The group-code stream as `[code value]`, which is what a DXF file is."
+  [text]
+  (let [ls (->> (string/split-lines text) (map string/trim))]
+    (vec (keep (fn [[c v]]
+                 (when (and c v (re-matches #"-?\d+" c))
+                   [(#?(:clj Long/parseLong :cljs js/parseInt) c) v]))
+               (partition 2 2 nil ls)))))
+
+(defn- dxf-number [v]
+  (let [d (#?(:clj Double/parseDouble :cljs js/parseFloat) v)]
+    (if (#?(:clj Double/isNaN :cljs js/isNaN) d) 0.0 d)))
+
+(defn read-dxf
+  "Parse ASCII DXF into `{:dxf/units :dxf/entities :dxf/unsupported :dxf/counts}`.
+
+  Reads LINE, TEXT, CIRCLE, ARC and LWPOLYLINE. `export-dxf` only ever writes
+  the first two, so a parser that handled just those would be an echo of this
+  library's own writer rather than a reader of DXF — the tests exercise a
+  CIRCLE and an ARC that nothing here emits.
+
+  Unknown entity types are counted by name in `:dxf/unsupported`. Nothing is
+  dropped quietly."
+  [text]
+  (let [pairs (dxf-pairs text)
+        units (loop [ps pairs]
+                (cond (empty? ps) nil
+                      (and (= 9 (first (first ps))) (= "$INSUNITS" (second (first ps))))
+                      (some (fn [[c v]] (when (= 70 c) (get dxf-unit-codes (long (dxf-number v)))))
+                            (take 4 (rest ps)))
+                      :else (recur (rest ps))))
+        ;; entities are the group-code runs that start at each `0 <TYPE>`
+        starts (keep-indexed (fn [i [c _]] (when (zero? c) i)) pairs)
+        runs (map (fn [[a b]] (subvec pairs a (or b (count pairs))))
+                  (map vector starts (concat (rest starts) [nil])))
+        in-entities? (atom false)
+        parsed
+        (reduce
+         (fn [acc run]
+           (let [kind (second (first run))
+                 g (fn [code] (some (fn [[c v]] (when (= code c) v)) (rest run)))
+                 all (fn [code] (keep (fn [[c v]] (when (= code c) v)) (rest run)))]
+             (cond
+               (and (= "SECTION" kind) (= "ENTITIES" (g 2))) (do (reset! in-entities? true) acc)
+               (= "ENDSEC" kind) (do (reset! in-entities? false) acc)
+               (not @in-entities?) acc
+               (= "EOF" kind) acc
+               (not (contains? dxf-readable-entities kind))
+               (update-in acc [:dxf/unsupported kind] (fnil inc 0))
+               :else
+               (update acc :dxf/entities conj
+                       (merge {:entity/kind (keyword (string/lower-case kind))
+                               :entity/layer (or (g 8) "0")}
+                              (case kind
+                                "LINE" {:entity/start [(dxf-number (g 10)) (dxf-number (g 20))]
+                                        :entity/end [(dxf-number (g 11)) (dxf-number (g 21))]}
+                                "TEXT" {:entity/at [(dxf-number (g 10)) (dxf-number (g 20))]
+                                        :entity/height (dxf-number (or (g 40) "0"))
+                                        :entity/text (or (g 1) "")}
+                                "CIRCLE" {:entity/center [(dxf-number (g 10)) (dxf-number (g 20))]
+                                          :entity/radius (dxf-number (g 40))}
+                                "ARC" {:entity/center [(dxf-number (g 10)) (dxf-number (g 20))]
+                                       :entity/radius (dxf-number (g 40))
+                                       :entity/start-angle (dxf-number (g 50))
+                                       :entity/end-angle (dxf-number (g 51))}
+                                "LWPOLYLINE" {:entity/points (mapv vector
+                                                                   (map dxf-number (all 10))
+                                                                   (map dxf-number (all 20)))
+                                              :entity/closed? (= 1 (long (dxf-number (or (g 70) "0"))))}))))))
+         {:dxf/entities [] :dxf/unsupported {}}
+         runs)]
+    (assoc parsed
+           :dxf/units units
+           :dxf/counts (frequencies (map :entity/kind (:dxf/entities parsed))))))
+
 (defn- pdf-escape [s]
   (-> (str s) (string/replace "\\" "\\\\") (string/replace "(" "\\(") (string/replace ")" "\\)")))
 (defn- pad10 [number]

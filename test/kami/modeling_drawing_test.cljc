@@ -130,3 +130,39 @@
                            (assoc-in sheet [:drawing/annotations 0 :annotation/data :bom/part]
                                      (uid "missing-part")))))))
     (is (= :iso (:drawing/standard (drawing/sheet (uid "iso") "r1" {:template :iso-a3}))))))
+
+(deftest dxf-reads-back-and-reads-drawings-it-did-not-write
+  (let [uid #(document/stable-uuid "dxf/read" %)
+        geometry (drawing/box-view-geometry {:min [0 0 0] :max [20 10 8]} :front)
+        view (drawing/view (uid "v") :front geometry {:origin [10 10] :scale 1})
+        sheet (-> (drawing/sheet (uid "s") "r1" {:paper :A3 :units :mm})
+                  (drawing/add-view view))
+        round (drawing/read-dxf (drawing/export-dxf sheet))
+        ;; A parser that only reads what this library writes is an echo of the
+        ;; writer, not a reader of DXF. CIRCLE, ARC and LWPOLYLINE are never
+        ;; emitted by `export-dxf`; SPLINE is emitted by nobody here and must be
+        ;; REPORTED rather than dropped.
+        foreign (str "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n1\n0\nENDSEC\n"
+                     "0\nSECTION\n2\nENTITIES\n"
+                     "0\nCIRCLE\n8\nHOLES\n10\n5.0\n20\n7.5\n40\n2.5\n"
+                     "0\nARC\n8\nHOLES\n10\n0\n20\n0\n40\n10\n50\n0\n51\n90\n"
+                     "0\nLWPOLYLINE\n8\nOUT\n90\n3\n70\n1\n10\n0\n20\n0\n10\n5\n20\n0\n10\n5\n20\n5\n"
+                     "0\nSPLINE\n8\nX\n"
+                     "0\nENDSEC\n0\nEOF\n")
+        r (drawing/read-dxf foreign)]
+    (is (= :mm (:dxf/units round)))
+    (is (= 4 (get-in round [:dxf/counts :line])))
+    (is (= {} (:dxf/unsupported round)))
+    ;; the first visible edge of the front view, placed at the view origin
+    (is (= [10.0 10.0] (:entity/start (first (:dxf/entities round)))))
+    (is (= "VISIBLE" (:entity/layer (first (:dxf/entities round)))))
+    (is (= :in (:dxf/units r)))
+    (is (= {:circle 1 :arc 1 :lwpolyline 1} (:dxf/counts r)))
+    (is (= {"SPLINE" 1} (:dxf/unsupported r)) "unknown entities are named, not dropped")
+    (let [c (first (filter #(= :circle (:entity/kind %)) (:dxf/entities r)))
+          a (first (filter #(= :arc (:entity/kind %)) (:dxf/entities r)))
+          p (first (filter #(= :lwpolyline (:entity/kind %)) (:dxf/entities r)))]
+      (is (= [[5.0 7.5] 2.5] [(:entity/center c) (:entity/radius c)]))
+      (is (= [0.0 90.0] [(:entity/start-angle a) (:entity/end-angle a)]))
+      (is (= [[0.0 0.0] [5.0 0.0] [5.0 5.0]] (:entity/points p)))
+      (is (true? (:entity/closed? p))))))
