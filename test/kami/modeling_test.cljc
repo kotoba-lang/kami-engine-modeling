@@ -312,3 +312,68 @@
       (is (= 26 (count (distinct idx)))))
     (testing "and the result is a mesh by this namespace's own predicate"
       (is (m/valid-mesh? s)))))
+
+;; ---------------------------------------------------------------------
+;; Catmull-Clark (2026-08-22)
+;;
+;; `subdivide-mesh` splits the topology and leaves every point where it was —
+;; a LINEAR step. Both produce identical vertex and face COUNTS, which is
+;; exactly why counting cannot tell them apart.
+;; ---------------------------------------------------------------------
+
+(defn- extreme-corner [mesh]
+  (first (filter (fn [p] (every? #(> % 0.4) p)) (:mesh/vertices mesh))))
+
+(deftest catmull-clark-moves-points-where-linear-subdivision-does-not
+  (let [c (m/cube 2)
+        linear (m/subdivide-mesh c)
+        cc (m/catmull-clark c)]
+    (testing "the two agree on counts, so counts prove nothing"
+      (is (= [(count (:mesh/vertices linear)) (count (:mesh/faces linear))]
+             [(count (:mesh/vertices cc)) (count (:mesh/faces cc))]))
+      (is (= [26 24] [(count (:mesh/vertices cc)) (count (:mesh/faces cc))])))
+
+    (testing "linear subdivision leaves the cube's corner exactly where it was"
+      (is (= [1.0 1.0 1.0] (mapv double (extreme-corner linear)))))
+
+    (testing "Catmull-Clark moves it to 5/9, which is the closed form for valence 3"
+      ;; F = (1/3,1/3,1/3), R = (2/3,2/3,2/3), n = 3
+      ;; V = (F + 2R + (n-3)P)/n = (1/3 + 4/3)/3 = 5/9
+      (is (every? #(< (Math/abs (- % (/ 5.0 9.0))) 1.0e-12)
+                  (extreme-corner cc))))
+
+    (testing "and the result is still a mesh"
+      (is (m/valid-mesh? cc)))))
+
+(deftest creases-hold-the-shape-they-are-put-on
+  (let [c (m/cube 2)
+        every-edge (set (for [f (:mesh/faces c)
+                              [a b] (map vector f (concat (rest f) [(first f)]))]
+                          (m/crease a b)))
+        creased (m/catmull-clark c every-edge)]
+    (testing "with every edge creased, a cube corner is a corner and does not move"
+      (is (= [1.0 1.0 1.0] (mapv double (extreme-corner creased)))))
+    (testing "which is a different answer from the same call without creases"
+      (is (not= (extreme-corner creased) (extreme-corner (m/catmull-clark c)))))
+    (testing "still a mesh"
+      (is (m/valid-mesh? creased)))))
+
+(deftest catmull-clark-refuses-a-sharpness-it-does-not-implement
+  ;; Fractional sharpness decays a crease over successive levels. Answering
+  ;; such a request with an infinitely sharp edge would give a shape nobody
+  ;; asked for, and it would look plausible.
+  (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+               (m/catmull-clark (m/cube 2) #{[0 1 3.5]})))
+  (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+               (m/catmull-clark (m/cube 2) [[0 1]]))))
+
+(deftest the-subdivision-modifier-can-ask-for-either-scheme
+  (let [c (m/cube 2)
+        obj (m/object (random-uuid) "probe" c)
+        with (fn [opts] (m/evaluated-object-mesh
+                         (m/add-modifier obj (m/modifier :subdivision opts))))]
+    (testing "linear is the default, and keeps the corner"
+      (is (= [1.0 1.0 1.0] (mapv double (extreme-corner (with {:levels 1}))))))
+    (testing "and Catmull-Clark can be asked for by name"
+      (is (every? #(< (Math/abs (- % (/ 5.0 9.0))) 1.0e-12)
+                  (extreme-corner (with {:levels 1 :scheme :catmull-clark})))))))
