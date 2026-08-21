@@ -536,6 +536,120 @@
                                          (map-indexed vector (:mesh/faces m)))]
     (mesh vertices faces)))
 
+(defn crease
+  "An infinitely sharp crease on the edge between vertices `a` and `b`.
+
+  Only fully sharp creases are represented. Fractional sharpness (OpenSubdiv's
+  0..10 scale, where a crease decays over successive levels) is a different
+  rule set, and answering a fractional request with a sharp edge would silently
+  give a shape nobody asked for — `catmull-clark` refuses one instead."
+  [a b]
+  (if (< a b) [a b] [b a]))
+
+(defn- edge-key* [a b] (if (< a b) [a b] [b a]))
+
+(defn catmull-clark
+  "One Catmull-Clark subdivision step, with optional infinitely sharp creases.
+
+  Distinct from `subdivide-mesh`, which splits the same topology but leaves
+  every point where it was — a LINEAR step. The two produce identical vertex
+  and face COUNTS, which is why counting cannot tell them apart: on a unit cube
+  linear subdivision leaves the corner at (1,1,1) while Catmull-Clark moves it
+  to (5/9,5/9,5/9), and only looking at a position says which one ran.
+
+  Rules, in the standard form:
+    face point    centroid of the face
+    edge point    interior: mean of its two endpoints and its two face points
+                  crease or boundary: midpoint of its endpoints
+    vertex point  interior: (F + 2R + (n-3)P)/n
+                  crease (exactly two crease edges): (6P + e1 + e2)/8
+                  corner (three or more crease edges): P, unmoved
+
+  `creases` is a set of `[a b]` pairs from `crease`. Boundary edges — those with
+  one adjacent face — are treated as creases whether or not they are listed,
+  because the interior rule has no second face point to average."
+  ([m] (catmull-clark m #{}))
+  ([{:mesh/keys [vertices faces] :as m} creases]
+   (when-not (valid-mesh? m) (throw (ex-info "invalid mesh" {:mesh m})))
+   (when-not (set? creases)
+     (throw (ex-info "creases must be a set of [a b] pairs from `crease`"
+                     {:creases creases})))
+   (when (some #(not (and (vector? %) (= 2 (count %)))) creases)
+     (throw (ex-info (str "catmull-clark takes infinitely sharp creases only;"
+                          " a fractional sharpness is a different rule set and"
+                          " answering it with a sharp edge would give a shape"
+                          " nobody asked for")
+                     {:creases creases})))
+   (let [n-faces (count faces)
+         face-points (mapv (fn [f] (mapv #(/ % (count f))
+                                         (reduce (fn [acc i] (mapv + acc (nth vertices i)))
+                                                 [0.0 0.0 0.0] f)))
+                           faces)
+         ;; edge -> the faces touching it
+         edge->faces (reduce (fn [acc [fi f]]
+                               (reduce (fn [a [x y]] (update a (edge-key* x y) (fnil conj []) fi))
+                                       acc
+                                       (map vector f (concat (rest f) [(first f)]))))
+                             {} (map-indexed vector faces))
+         sharp? (fn [e] (or (contains? creases e) (< (count (edge->faces e)) 2)))
+         edge-point (fn [[a b :as e]]
+                      (let [mid (mapv #(/ (+ %1 %2) 2.0) (nth vertices a) (nth vertices b))]
+                        (if (sharp? e)
+                          mid
+                          (let [fps (map #(nth face-points %) (edge->faces e))]
+                            (mapv #(/ % 2.0)
+                                  (mapv + mid (mapv #(/ % (count fps))
+                                                    (reduce (fn [acc p] (mapv + acc p))
+                                                            [0.0 0.0 0.0] fps))))))))
+         edges (vec (sort (keys edge->faces)))
+         edge-index (into {} (map-indexed (fn [i e] [e (+ (count vertices) n-faces i)]) edges))
+         edge-points (mapv edge-point edges)
+         ;; per-vertex incident faces and edges
+         v-faces (reduce (fn [acc [fi f]] (reduce #(update %1 %2 (fnil conj #{}) fi) acc f))
+                         {} (map-indexed vector faces))
+         v-edges (reduce (fn [acc [a b :as e]]
+                           (-> acc (update a (fnil conj #{}) e) (update b (fnil conj #{}) e)))
+                         {} edges)
+         vertex-point
+         (fn [vi]
+           (let [p (nth vertices vi)
+                 inc-edges (get v-edges vi #{})
+                 sharp-edges (filter sharp? inc-edges)
+                 sc (count sharp-edges)]
+             (cond
+               (>= sc 3) p                       ; corner — stays put
+               (= sc 2) (let [ends (map (fn [[a b]] (nth vertices (if (= a vi) b a))) sharp-edges)]
+                          (mapv (fn [pc e1 e2] (/ (+ (* 6.0 pc) e1 e2) 8.0))
+                                p (first ends) (second ends)))
+               :else
+               (let [fs (get v-faces vi #{})
+                     nn (count inc-edges)
+                     F (mapv #(/ % (max 1 (count fs)))
+                             (reduce (fn [acc fi] (mapv + acc (nth face-points fi)))
+                                     [0.0 0.0 0.0] fs))
+                     R (mapv #(/ % (max 1 nn))
+                             (reduce (fn [acc [a b]]
+                                       (mapv + acc (mapv (fn [x y] (/ (+ x y) 2.0))
+                                                         (nth vertices a) (nth vertices b))))
+                                     [0.0 0.0 0.0] inc-edges))]
+                 (mapv (fn [f r pc] (/ (+ f (* 2.0 r) (* (- nn 3) pc)) nn)) F R p)))))
+         new-vertices (into (into (mapv vertex-point (range (count vertices)))
+                                  face-points)
+                            edge-points)
+         face-index (fn [fi] (+ (count vertices) fi))
+         new-faces (vec (mapcat
+                         (fn [[fi f]]
+                           (let [k (count f)]
+                             (mapv (fn [i]
+                                     (let [prev (nth f (mod (dec i) k))
+                                           cur (nth f i)
+                                           nxt (nth f (mod (inc i) k))]
+                                       [cur (edge-index (edge-key* cur nxt))
+                                        (face-index fi) (edge-index (edge-key* prev cur))]))
+                                   (range k))))
+                         (map-indexed vector faces)))]
+     (mesh new-vertices new-faces))))
+
 (def modifier-registry
   {:mirror {:input :mesh :output :mesh}
    :subdivision {:input :mesh :output :mesh}
@@ -725,7 +839,10 @@
       (validate-modifier {:modifier/kind kind :modifier/options options})
     (case kind
       :mirror (mirror-mesh m (:axis options :x))
-      :subdivision (nth (iterate subdivide-mesh m) (:levels options 1))
+      :subdivision (let [step (if (= :catmull-clark (:scheme options :linear))
+                                 #(catmull-clark % (set (:creases options #{})))
+                                 subdivide-mesh)]
+                     (nth (iterate step m) (:levels options 1)))
       :array (array-mesh m (:count options 2) (:offset options [2.5 0 0]))
       :translate (translate-vertices m (range (count (:mesh/vertices m))) (:offset options))
       :scale (scale-mesh m (:factors options))
