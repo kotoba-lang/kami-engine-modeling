@@ -31,7 +31,59 @@
 ;;                                Making it portable is a separate change; it
 ;;                                is named here so it is not silently lost.
 
-(println "SKIPPED kami.modeling-crypto-test (.clj, JVM-only) kami.modeling-cae-test (requires clojure.java.io)")
+(require '["node:fs" :as fs])
+
+(def excluded
+  "Namespace -> {:file .. :still-true .. :because ..}.
+
+  The reasons were in the comment above, and a comment is not checked. As data
+  the entries are recognised as DECLARED exclusions by the superproject's
+  `verify-cljs-runner-completeness`; asserted below, they also stop outliving
+  their cause. The shape is `kotoba-lang/langgraph`'s: a substring that must
+  still be present in the named file, so a port that removes the obstacle
+  fails this run instead of leaving a stale entry behind.
+
+  `:absent` means the file must NOT exist -- that is how an extension-level
+  exclusion is re-checked: if someone gives `modeling_crypto_test` a `.cljc`,
+  the reason `\".clj, JVM-only by extension\"` has stopped being true."
+  '{kami.modeling-crypto-test
+    {:file "test/kami/modeling_crypto_test.cljc" :absent true
+     :because ".clj, JVM-only by extension"}
+
+    kami.modeling-cae-test
+    {:file "test/kami/modeling_cae_test.cljc" :still-contains "clojure.java.io"
+     :because "requires clojure.java.io unconditionally, so it is JVM-only in
+               fact even though the extension says otherwise. Making it
+               portable is a separate change."}})
+
+(println (str "SKIPPED " (clojure.string/join " " (map str (keys excluded)))
+              " -- declared in `excluded`, and each reason re-checked below"))
+
+;; The exclusions, re-checked.
+(doseq [[ns-sym {:keys [file still-contains absent because]}] excluded]
+  (let [there? (.existsSync fs file)]
+    (cond
+      (and absent there?)
+      (do (println (str "STALE EXCLUSION: " ns-sym " is excluded because " because
+                        ", and " file " now exists. Retire the entry and put the"
+                        " namespace in the suite."))
+          (set! (.-exitCode js/process) 1))
+
+      (and still-contains (not there?))
+      (do (println (str "STALE EXCLUSION: " ns-sym " names " file
+                        ", which is not there. The reason cannot be checked, so it"
+                        " cannot be trusted."))
+          (set! (.-exitCode js/process) 1))
+
+      (and still-contains
+           (not (.includes (str (.readFileSync fs file "utf8")) still-contains)))
+      (do (println (str "STALE EXCLUSION: " ns-sym " is excluded because it "
+                        because ", and " file " no longer contains "
+                        (pr-str still-contains) ". Retire the entry and put the"
+                        " namespace in the suite."))
+          (set! (.-exitCode js/process) 1))
+
+      :else nil)))
 
 (require '[cljs.test :as t]
          '[kami.modeling-test]
