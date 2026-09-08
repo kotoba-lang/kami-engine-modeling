@@ -2,7 +2,7 @@
   "Versioned, immutable source document shared by CAD, assembly, drawing, CAE,
   rendering and collaboration projections. Dense geometry remains in payloads;
   this namespace owns identity, units, tolerance and provenance."
-  (:require [clojure.string :as string]))
+  (:require [kotoba.lang.text :as string]))
 
 (def schema-version 1)
 (def supported-units #{:mm :cm :m :in :ft})

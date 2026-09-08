@@ -1,6 +1,6 @@
 (ns kami.modeling-sheet-metal-test
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.string :as string]
+            [kotoba.lang.text :as string]
             [kami.modeling.sheet-metal :as sm]))
 
 (def ^:private pi #?(:clj Math/PI :cljs js/Math.PI))

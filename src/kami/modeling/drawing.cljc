@@ -1,6 +1,6 @@
 (ns kami.modeling.drawing
   "Associative semantic manufacturing drawings with deterministic SVG output."
-  (:require [clojure.string :as string]
+  (:require [kotoba.lang.text :as string]
             [kami.modeling.document :as document]))
 
 (def paper-sizes {:A4 [297 210] :A3 [420 297] :ANSI-A [279.4 215.9] :ANSI-B [431.8 279.4]})
@@ -335,7 +335,7 @@
                (update-in acc [:dxf/unsupported kind] (fnil inc 0))
                :else
                (update acc :dxf/entities conj
-                       (merge {:entity/kind (keyword (string/lower-case kind))
+                       (merge {:entity/kind (keyword (string/lower kind))
                                :entity/layer (or (g 8) "0")}
                               (case kind
                                 "LINE" {:entity/start [(dxf-number (g 10)) (dxf-number (g 20))]
