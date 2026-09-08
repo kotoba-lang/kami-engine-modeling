@@ -25,7 +25,7 @@
   jogs, louvres, corner relief, springback compensation, and material-specific
   K-factor tables. `unfold` refuses a part it cannot lay flat rather than
   returning a blank that would be cut wrong."
-  (:require [clojure.string :as string]))
+  (:require [kotoba.lang.text :as string]))
 
 (def ^:private pi #?(:clj Math/PI :cljs js/Math.PI))
 (defn- tan [x] (#?(:clj Math/tan :cljs js/Math.tan) x))

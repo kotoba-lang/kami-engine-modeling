@@ -1,5 +1,5 @@
 (ns kami.modeling-step-test
-  (:require [clojure.test :refer [deftest is]] [clojure.string :as string]
+  (:require [clojure.test :refer [deftest is]] [kotoba.lang.text :as string]
             [kami.modeling.brep :as brep] [kami.modeling.step :as step]))
 
 (deftest ap242-subset-round-trips-closed-topology

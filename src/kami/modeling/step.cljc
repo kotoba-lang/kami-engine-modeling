@@ -2,7 +2,7 @@
   "Deterministic ISO-10303-21 exchange adapter for the documented Kotoba AP242
   geometric subset. Unsupported entities fail closed; this is not a claim of
   full AP242 conformance."
-  (:require [clojure.string :as string]
+  (:require [kotoba.lang.text :as string]
             [kami.modeling.brep :as brep]
             [kami.modeling.document :as document]))
 

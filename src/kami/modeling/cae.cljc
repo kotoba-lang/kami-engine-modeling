@@ -1,7 +1,7 @@
 (ns kami.modeling.cae
   "Solver-neutral CAE study data and a small, independently checkable 1D linear
   static reference solver. Results carry complete provenance and qualification."
-  (:require [clojure.string :as string]
+  (:require [kotoba.lang.text :as string]
             [kami.modeling.document :as document]
             [num.array :as num-array] [num.protocol :as num-protocol]
             [num.solver :as num-solver] [num.sparse :as num-sparse]))
