@@ -5,3 +5,6 @@ test/fixtures/calculix/*.cvg
 test/fixtures/calculix/*.dat
 test/fixtures/calculix/*.sta
 test/fixtures/calculix/spooles.out
+
+# nbb dependency cache -- a build artifact, not source
+.nbb/
