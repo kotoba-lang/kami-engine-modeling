@@ -31,7 +31,7 @@
 ;;                                Making it portable is a separate change; it
 ;;                                is named here so it is not silently lost.
 
-(require '["node:fs" :as fs])
+(require '[kotoba.lang.text] '["node:fs" :as fs])
 
 (def excluded
   "Namespace -> {:file .. :still-true .. :because ..}.
@@ -56,7 +56,7 @@
                fact even though the extension says otherwise. Making it
                portable is a separate change."}})
 
-(println (str "SKIPPED " (clojure.string/join " " (map str (keys excluded)))
+(println (str "SKIPPED " (kotoba.lang.text/join " " (map str (keys excluded)))
               " -- declared in `excluded`, and each reason re-checked below"))
 
 ;; The exclusions, re-checked.

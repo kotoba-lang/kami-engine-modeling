@@ -1,0 +1,7 @@
+;; nbb reads this file and does NOT read deps.edn or bb.edn.
+;; The .cljs here are run by nbb, so a coordinate declared only
+;; in deps.edn is invisible to them.
+;;
+;; :paths is COPIED from deps.edn, not chosen here.
+{:paths ["src" "test"]
+ :deps {io.github.kotoba-lang/text {:git/sha "2ee6dce2ca944decd001f9378868dd703fc3e741"}}}
