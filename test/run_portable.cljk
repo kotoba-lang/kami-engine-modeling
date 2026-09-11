@@ -1,8 +1,8 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The portable suite on nbb — no build step, no JVM.
 ;;
 ;; Until this file existed, every `.cljc` namespace here ran under
-;; `clojure -M:test` and NOWHERE ELSE, so a defect in the ClojureScript half
+;; `kbb -M:test` and NOWHERE ELSE, so a defect in the ClojureScript half
 ;; of a reader conditional was invisible. That is not hypothetical: on
 ;; 2026-08-20 `kami.modeling.document/stable-uuid` — the identity key for
 ;; documents, assemblies, occurrences and drawing views — returned the SAME
@@ -11,8 +11,8 @@
 ;; was green. `reduce` over a string yields 1-character STRINGS in CLJS, so
 ;; `(int ch)` was NaN and the hash accumulator collapsed.
 ;;
-;;   NUM=$(clojure -Spath | tr ':' '\n' | grep 'kotoba-lang/num' | head -1)
-;;   nbb --classpath "src:test:$NUM" test/run_portable.cljk
+;;   NUM=$(kbb -Spath | tr ':' '\n' | grep 'kotoba-lang/num' | head -1)
+;;   kbb --backend sci --classpath "src:test:$NUM" test/run_portable.cljk
 ;;
 ;; `num` is a git dep and is not vendored here, so its source directory has to
 ;; be on the classpath explicitly. If it is missing the require below fails
