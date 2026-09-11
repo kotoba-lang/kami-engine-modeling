@@ -12,7 +12,7 @@
 ;; `(int ch)` was NaN and the hash accumulator collapsed.
 ;;
 ;;   NUM=$(clojure -Spath | tr ':' '\n' | grep 'kotoba-lang/num' | head -1)
-;;   nbb --classpath "src:test:$NUM" test/run_portable.cljs
+;;   nbb --classpath "src:test:$NUM" test/run_portable.cljk
 ;;
 ;; `num` is a git dep and is not vendored here, so its source directory has to
 ;; be on the classpath explicitly. If it is missing the require below fails
@@ -51,7 +51,7 @@
      :because ".clj, JVM-only by extension"}
 
     kami.modeling-cae-test
-    {:file "test/kami/modeling_cae_test.cljc" :still-contains "clojure.java.io"
+    {:file "test/kami/modeling_cae_test.cljk" :still-contains "clojure.java.io"
      :because "requires clojure.java.io unconditionally, so it is JVM-only in
                fact even though the extension says otherwise. Making it
                portable is a separate change."}})
