@@ -152,4 +152,4 @@ and a non-destructive adapter from existing polygon scenes. Exact geometry,
 drawings, CAE and collaboration history build on this contract rather than
 using renderer meshes as their source of truth.
 
-Run `clojure -M:test` (currently 83 tests / 646 assertions).
+Run `kbb -M:test` (currently 83 tests / 646 assertions).
