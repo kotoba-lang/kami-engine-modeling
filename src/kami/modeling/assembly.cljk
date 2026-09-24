@@ -3,7 +3,7 @@
   deterministic translational solving. Rotational/kinematic mate expansion
   builds on the same explicit constraint graph."
   (:require [kami.modeling.document :as document]
-            #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
+            #?(:clj [kotoba.lang.edn :as edn] :cljs [cljs.reader :as edn])))
 
 (def mate-kinds #{:coincident :distance :parallel :concentric :angle :gear :rack-pinion :limit})
 (def joint-kinds #{:fixed :revolute :prismatic})
