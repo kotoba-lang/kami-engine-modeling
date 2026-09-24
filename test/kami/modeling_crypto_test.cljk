@@ -1,5 +1,5 @@
 (ns kami.modeling-crypto-test
-  (:require [kotoba.test :refer [deftest is]] [kami.modeling.collaboration :as collaboration]
+  (:require [kotoba.bytes :as kbytes] [kotoba.test :refer [deftest is]] [kami.modeling.collaboration :as collaboration]
             [kami.modeling.document :as document])
   (:import [java.security KeyPairGenerator Signature]
            [java.util Base64]))
@@ -13,12 +13,12 @@
   (fn [record payload]
     (let [signature (Signature/getInstance "Ed25519")]
       (.initSign signature (get private-keys (:key/id record)))
-      (.update signature (.getBytes payload "UTF-8"))
+      (.update signature (kbytes/utf8-bytes payload))
       (.encodeToString encoder (.sign signature)))))
 (defn verifier [record payload signature-text]
   (let [signature (Signature/getInstance "Ed25519")]
     (.initVerify signature (:key/public record))
-    (.update signature (.getBytes payload "UTF-8"))
+    (.update signature (kbytes/utf8-bytes payload))
     (.verify signature (.decode decoder signature-text))))
 
 (deftest real-ed25519-rotation-revocation-and-tamper-gate
