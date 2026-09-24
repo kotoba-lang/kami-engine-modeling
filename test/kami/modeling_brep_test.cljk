@@ -1,5 +1,5 @@
 (ns kami.modeling-brep-test
-  (:require [clojure.test :refer [deftest is]] [kami.modeling :as modeling]
+  (:require [kotoba.test :refer [deftest is]] [kami.modeling :as modeling]
             [kami.modeling.brep :as brep]))
 
 (deftest closed-analytic-box-brep

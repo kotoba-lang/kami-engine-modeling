@@ -1,5 +1,5 @@
 (ns kami.modeling-test
-  (:require [clojure.test :refer [deftest is testing]] [kami.modeling :as m]))
+  (:require [kotoba.test :refer [deftest is testing]] [kami.modeling :as m]))
 
 (deftest extrude-is-pure-and-keeps-a-valid-mesh
   (let [base (m/quad 2 4) result (m/extrude-face base 0 [0 0 3])]

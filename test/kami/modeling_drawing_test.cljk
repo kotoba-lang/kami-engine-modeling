@@ -1,5 +1,5 @@
 (ns kami.modeling-drawing-test
-  (:require [clojure.test :refer [deftest is]] [kotoba.lang.text :as string]
+  (:require [kotoba.test :refer [deftest is]] [kotoba.lang.text :as string]
             [kami.modeling.assembly :as assembly] [kami.modeling.document :as document]
             [kami.modeling.drawing :as drawing]))
 

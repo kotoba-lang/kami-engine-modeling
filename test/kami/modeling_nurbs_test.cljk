@@ -1,5 +1,5 @@
 (ns kami.modeling-nurbs-test
-  (:require [clojure.test :refer [deftest is]] [kami.modeling :as modeling]
+  (:require [kotoba.test :refer [deftest is]] [kami.modeling :as modeling]
             [kami.modeling.nurbs :as nurbs]))
 
 (defn near? [a b] (< (#?(:clj Math/abs :cljs js/Math.abs) (- a b)) 1.0e-9))
