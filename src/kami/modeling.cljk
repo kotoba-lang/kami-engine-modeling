@@ -1,7 +1,7 @@
 (ns kami.modeling
   "Portable polygon-editing domain engine. Meshes are immutable EDN values;
   every operation returns a new mesh suitable for undo/redo and persistence."
-  (:require [clojure.set :as set] [kami.modeling.csg :as csg]))
+  (:require [kotoba.lang.coll :as set] [kami.modeling.csg :as csg]))
 
 (defn mesh
   "Construct a mesh from vertex positions and polygon index vectors."
