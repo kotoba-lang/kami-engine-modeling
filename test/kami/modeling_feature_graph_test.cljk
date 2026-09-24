@@ -1,5 +1,5 @@
 (ns kami.modeling-feature-graph-test
-  (:require [clojure.test :refer [deftest is]] [kami.modeling.document :as document]
+  (:require [kotoba.test :refer [deftest is]] [kami.modeling.document :as document]
             [kami.modeling.feature-graph :as graph]))
 
 (def uid #(document/stable-uuid "feature-graph-test" %))

@@ -1,5 +1,5 @@
 (ns kami.modeling-sheet-metal-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.lang.text :as string]
             [kami.modeling.sheet-metal :as sm]))
 

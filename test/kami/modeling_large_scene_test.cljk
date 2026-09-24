@@ -1,5 +1,5 @@
 (ns kami.modeling-large-scene-test
-  (:require [clojure.test :refer [deftest is]] [kami.modeling.document :as document]
+  (:require [kotoba.test :refer [deftest is]] [kami.modeling.document :as document]
             [kami.modeling.large-scene :as large]))
 
 (def uid #(document/stable-uuid "large-scene-test" %))

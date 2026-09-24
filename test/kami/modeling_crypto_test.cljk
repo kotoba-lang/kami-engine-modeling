@@ -1,5 +1,5 @@
 (ns kami.modeling-crypto-test
-  (:require [clojure.test :refer [deftest is]] [kami.modeling.collaboration :as collaboration]
+  (:require [kotoba.test :refer [deftest is]] [kami.modeling.collaboration :as collaboration]
             [kami.modeling.document :as document])
   (:import [java.security KeyPairGenerator Signature]
            [java.util Base64]))

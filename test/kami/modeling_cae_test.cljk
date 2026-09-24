@@ -1,5 +1,5 @@
 (ns kami.modeling-cae-test
-  (:require [clojure.test :refer [deftest is]] [clojure.java.io :as io] [kami.modeling.cae :as cae]
+  (:require [kotoba.test :refer [deftest is]] [clojure.java.io :as io] [kami.modeling.cae :as cae]
             [kami.modeling.document :as document] [num.cpu :as num-cpu]))
 
 (def uid #(document/stable-uuid "cae-test" %))

@@ -1,5 +1,5 @@
 (ns kami.modeling-assembly-test
-  (:require [clojure.test :refer [deftest is]] [kami.modeling.assembly :as assembly]
+  (:require [kotoba.test :refer [deftest is]] [kami.modeling.assembly :as assembly]
             [kami.modeling.document :as document]))
 
 (def uid #(document/stable-uuid "assembly-test" %))

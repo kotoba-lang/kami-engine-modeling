@@ -1,5 +1,5 @@
 (ns kami.modeling-collaboration-test
-  (:require [clojure.test :refer [deftest is]] [kami.modeling.collaboration :as collaboration]
+  (:require [kotoba.test :refer [deftest is]] [kami.modeling.collaboration :as collaboration]
             [kami.modeling.document :as document]))
 
 (def uid #(document/stable-uuid "collaboration-test" %))
