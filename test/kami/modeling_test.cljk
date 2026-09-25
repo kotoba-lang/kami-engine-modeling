@@ -103,7 +103,7 @@
     (is (= [2.0 -1.0 1.0] (nth (:mesh/vertices edge) 5)))
     (is (integer? (m/pick-element base [0 0 4] [0 0 -1] :vertex)))
     (is (= 2 (count (m/pick-element base [0 0 4] [0 0 -1] :edge))))
-    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (m/translate-edge base [0 6] [1 0 0])))))
+    (is (thrown? js/Error (m/translate-edge base [0 6] [1 0 0])))))
 
 (deftest multi-vertex-and-edge-transforms-deduplicate-endpoints
   (let [base (m/cube 2)
@@ -157,8 +157,8 @@
         child (m/object 2 "Child" (m/cube 1) {:parent 1})
         scene (m/scene [parent child])]
     (is (nil? (:object/parent (m/find-object (m/delete-object scene 1) 2))))
-    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (m/add-object scene parent)))
-    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+    (is (thrown? js/Error (m/add-object scene parent)))
+    (is (thrown? js/Error
                  (m/object 3 "Invalid" (m/mesh [] [[0 1 2]]))))))
 
 (deftest hierarchy-world-transform-visibility-and-lock
@@ -170,7 +170,7 @@
     (is (= 1 (:object/parent (m/find-object scene 2))))
     (is (:object/locked? (m/find-object scene 2)))
     (is (= 8 (count (:mesh/vertices (m/scene-mesh hidden)))))
-    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (m/reparent-object scene 1 2)))))
+    (is (thrown? js/Error (m/reparent-object scene 1 2)))))
 
 (deftest non-destructive-modifier-stack
   (let [base (m/object 1 "Cube" (m/cube 2))
@@ -192,7 +192,7 @@
   (let [cube (m/cube 2)]
     (is (= 16 (count (:mesh/vertices (m/mirror-mesh cube :z)))))
     (is (= 24 (count (:mesh/vertices (m/array-mesh cube 3 [2 0 0])))))
-    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (m/array-mesh cube 0 [1 0 0])))))
+    (is (thrown? js/Error (m/array-mesh cube 0 [1 0 0])))))
 
 (deftest production-modifier-registry-and-evaluation
   (let [quad (m/quad 2 2)
@@ -254,9 +254,9 @@
     (is (= material (:object/material (m/find-object edited 1))))
     (let [textured (assoc material :material/base-color-texture "data:image/png;base64,iVBORw0KGgo=")]
       (is (= textured (:object/material (m/find-object (m/set-object-material base 1 textured) 1)))))
-    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+    (is (thrown? js/Error
                  (m/set-object-material base 1 (assoc material :material/metallic 1.5))))
-    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+    (is (thrown? js/Error
                  (m/object 2 "Bad" (m/cube 1)
                            {:material {:material/base-color [1 0 0]
                                        :material/metallic 0 :material/roughness 1}})))))
@@ -275,7 +275,7 @@
     (is (= [[0.0 0.0] [1.0 0.0] [1.0 1.0] [0.0 1.0]] (:mesh/uvs unwrapped)))
     (is (m/valid-mesh? unwrapped))
     (is (false? (m/valid-mesh? (assoc unwrapped :mesh/uvs [[0 0]]))))
-    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+    (is (thrown? js/Error
                  (m/planar-unwrap (m/cube 1) :invalid)))))
 
 (deftest selected-uv-transform-supports-offset-scale-and-rotation
@@ -362,9 +362,9 @@
   ;; Fractional sharpness decays a crease over successive levels. Answering
   ;; such a request with an infinitely sharp edge would give a shape nobody
   ;; asked for, and it would look plausible.
-  (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+  (is (thrown? js/Error
                (m/catmull-clark (m/cube 2) #{[0 1 3.5]})))
-  (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+  (is (thrown? js/Error
                (m/catmull-clark (m/cube 2) [[0 1]]))))
 
 (deftest the-subdivision-modifier-can-ask-for-either-scheme
@@ -441,6 +441,6 @@
       (is (= 1 (count (m/uv-islands folded-strip)))))
     (testing "and an unwrap of two islands is refused, not offset arbitrarily"
       ;; Where to put one island relative to the other is a layout decision.
-      (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+      (is (thrown-with-msg? js/Error
                             #"one island"
                             (m/lscm-unwrap two))))))
